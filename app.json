@@ -1,0 +1,32 @@
+{
+  "name": "NEXORA-MD",
+  "description": "NEXORA MD - Advanced WhatsApp Bot",
+  "keywords": ["whatsapp", "bot", "baileys", "nexora", "multi-device", "js"],
+  "repository": "https://github.com/YOUR_USERNAME/NEXORA-MD",
+  "success_url": "/",
+  "stack": "container",
+  "env": {
+    "SESSION_ID": {
+      "description": "Optional session ID folder contents.",
+      "required": false,
+      "value": ""
+    },
+    "OWNER_NUMBER": {
+      "description": "Your main WhatsApp number with country code. No + or - spaces.",
+      "required": false,
+      "value": "254755660053"
+    }
+  },
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "eco"
+    }
+  },
+  "addons": [],
+  "buildpacks": [
+    { "url": "heroku/nodejs" },
+    { "url": "https://github.com/jonathanong/heroku-buildpack-ffmpeg-static.git" },
+    { "url": "https://github.com/clhuang/heroku-buildpack-webp.git" }
+  ]
+}
