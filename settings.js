@@ -41,7 +41,7 @@ const settings = {
   // ═══════════════════════════════════════════════
   channelId: "120363411498601038@newsletter",
   channelLink: "https://whatsapp.com/channel/0029VbCwZHACXC3PNHgtMT31",
-  channelName: "QUEEN BELLA MD",
+  channelName: " NEXORA MD",
 
   // ═══════════════════════════════════════════════
   // CHANNEL REACTIONS
