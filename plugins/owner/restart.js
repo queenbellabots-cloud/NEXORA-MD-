@@ -1,13 +1,15 @@
 /**
  * NEXORA MD - Restart + Update Command
- * Pulls latest code from GitHub, then restarts.
- * Gracefully falls back if git is not available.
+ * Pulls latest code from GitHub, then restarts
+ * No emojis in output. No version shown. Update info only.
  */
 
 const settings = require('../../settings');
 const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+
+const REPO_URL = 'https://github.com/queenbellabots-cloud/NEXORA-MD-';
 
 function run(cmd, cwd) {
   return new Promise((resolve) => {
@@ -23,10 +25,24 @@ function run(cmd, cwd) {
   });
 }
 
-function shortOutput(str, max = 400) {
-  if (!str) return '';
-  const clean = String(str).trim();
-  return clean.length > max ? clean.slice(0, max) + '...' : clean;
+function banner() {
+  return (
+    `+-----------------------+\n` +
+    `|    NEXORA MD          |\n` +
+    `|    Created by Rodgers |\n` +
+    `+-----------------------+`
+  );
+}
+
+function formatDate(date) {
+  return date.toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  });
 }
 
 module.exports = {
@@ -36,7 +52,7 @@ module.exports = {
   description: 'Pull updates from GitHub and restart the bot',
   usage: '.restart',
   ownerOnly: true,
-  react: '✅',
+  react: '🔄',
 
   async execute(conn, mek, args, chatId, isOwner) {
     try {
@@ -45,109 +61,121 @@ module.exports = {
         return;
       }
 
-      // Acknowledge
-      await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
-
       const botDir = process.cwd();
-      const lines = [];
 
       // ─────────────────────────────────────────
-      // 1. Check git repo
+      // Step 1 - Restarting message
       // ─────────────────────────────────────────
-      const gitCheck = await run('git rev-parse --is-inside-work-tree', botDir);
+      await conn.sendMessage(chatId, { react: { text: '🔄', key: mek.key } });
 
-      if (!gitCheck.ok || !gitCheck.stdout.includes('true')) {
-        // Not a git repo or git missing
-        await conn.sendMessage(chatId, {
-          text:
-            `Update not available on this host.\n\n` +
-            `Reason: git not found or not a git repository.\n` +
-            `This happens on Render / Railway / Koyeb / Heroku because their filesystems are ephemeral.\n\n` +
-            `To update:\n` +
-            `1. Push changes to GitHub\n` +
-            `2. Redeploy on your host\n\n` +
-            `Restarting process now...\n\n${settings.footer}`
-        });
-
-        setTimeout(() => process.exit(0), 2000);
-        return;
-      }
-
-      lines.push('Git repository detected.');
-
-      // ─────────────────────────────────────────
-      // 2. Fetch latest changes
-      // ─────────────────────────────────────────
-      lines.push('Fetching from origin...');
-      const fetch = await run('git fetch --all', botDir);
-
-      if (!fetch.ok) {
-        lines.push('Fetch failed: ' + shortOutput(fetch.stderr || fetch.error));
-      } else {
-        lines.push('Fetch complete.');
-      }
-
-      // ─────────────────────────────────────────
-      // 3. Check local changes
-      // ─────────────────────────────────────────
-      const status = await run('git status --porcelain', botDir);
-      if (status.ok && status.stdout.length > 0) {
-        lines.push('Local uncommitted changes detected — stashing them.');
-        await run('git stash push -u -m "nexora-auto-stash"', botDir);
-      }
-
-      // ─────────────────────────────────────────
-      // 4. Pull
-      // ─────────────────────────────────────────
-      lines.push('Pulling latest code...');
-      const pull = await run('git pull origin HEAD', botDir);
-
-      if (!pull.ok) {
-        lines.push('Pull failed: ' + shortOutput(pull.stderr || pull.error));
-      } else {
-        if (pull.stdout) {
-          lines.push(shortOutput(pull.stdout, 300));
-        }
-        lines.push('Pull complete.');
-      }
-
-      // ─────────────────────────────────────────
-      // 5. Check if package.json changed
-      // ─────────────────────────────────────────
-      let depsChanged = false;
-      try {
-        const pkgMtime = fs.statSync(path.join(botDir, 'package.json')).mtimeMs;
-        const now = Date.now();
-        // If package.json was modified in the last minute, assume deps changed
-        depsChanged = (now - pkgMtime) < 60000;
-      } catch (e) {}
-
-      if (depsChanged) {
-        lines.push('package.json changed — running npm install...');
-        const npm = await run('npm install --omit=dev', botDir);
-        if (!npm.ok) {
-          lines.push('npm install failed: ' + shortOutput(npm.stderr || npm.error));
-        } else {
-          lines.push('Dependencies installed.');
-        }
-      } else {
-        lines.push('Dependencies unchanged — skipping npm install.');
-      }
-
-      // ─────────────────────────────────────────
-      // 6. Send summary and restart
-      // ─────────────────────────────────────────
       await conn.sendMessage(chatId, {
         text:
-          `Update Summary\n` +
-          `====================\n` +
-          lines.join('\n') +
-          `\n====================\n` +
-          `Restarting bot in 3 seconds...\n\n` +
+          `${banner()}\n\n` +
+          `RESTARTING NEXORA MD...\n\n` +
+          `Checking for updates...\n` +
+          `Applying latest features...\n` +
+          `Restarting services...\n\n` +
+          `Status: Initializing...\n\n` +
           `${settings.footer}`
       });
 
-      setTimeout(() => process.exit(0), 3000);
+      await new Promise(r => setTimeout(r, 1200));
+
+      // ─────────────────────────────────────────
+      // Step 2 - Gather git info
+      // ─────────────────────────────────────────
+      const gitCheck = await run('git rev-parse --is-inside-work-tree', botDir);
+      const isGitRepo = gitCheck.ok && gitCheck.stdout.includes('true');
+
+      let currentCommit = 'unknown';
+
+      if (isGitRepo) {
+        const commitRes = await run('git rev-parse --short HEAD', botDir);
+        if (commitRes.ok && commitRes.stdout) {
+          currentCommit = commitRes.stdout.split('\n')[0];
+        }
+      }
+
+      const updateTime = formatDate(new Date());
+
+      // ─────────────────────────────────────────
+      // Step 3 - Updating message
+      // ─────────────────────────────────────────
+      await conn.sendMessage(chatId, {
+        text:
+          `${banner()}\n\n` +
+          `UPDATING NEXORA MD...\n\n` +
+          `Current Update: ${currentCommit}\n` +
+          `Update Time: ${updateTime}\n` +
+          `Source: ${REPO_URL}\n\n` +
+          `Step 1/3: Downloading latest version...\n` +
+          `Step 2/3: Applying updates...\n` +
+          `Step 3/3: Restarting services...\n\n` +
+          `Status: Updating...\n\n` +
+          `${settings.footer}`
+      });
+
+      // ─────────────────────────────────────────
+      // Step 4 - Actual git pull
+      // ─────────────────────────────────────────
+      let pullOutput = '';
+      let newCommit = currentCommit;
+
+      if (isGitRepo) {
+        const status = await run('git status --porcelain', botDir);
+        if (status.ok && status.stdout.length > 0) {
+          await run('git stash push -u -m "nexora-auto-stash"', botDir);
+        }
+
+        await run('git fetch --all', botDir);
+
+        const pull = await run('git pull origin HEAD', botDir);
+        if (pull.ok) {
+          pullOutput = 'Pull successful';
+          const newCommitRes = await run('git rev-parse --short HEAD', botDir);
+          if (newCommitRes.ok && newCommitRes.stdout) {
+            newCommit = newCommitRes.stdout.split('\n')[0];
+          }
+
+          try {
+            const pkgMtime = fs.statSync(path.join(botDir, 'package.json')).mtimeMs;
+            if ((Date.now() - pkgMtime) < 60000) {
+              pullOutput += ' + dependencies reinstalled';
+              await run('npm install --omit=dev', botDir);
+            }
+          } catch (e) {}
+        } else {
+          pullOutput = 'Pull failed: ' + (pull.stderr || 'unknown');
+        }
+      } else {
+        pullOutput = 'Git not available on this host';
+      }
+
+      await new Promise(r => setTimeout(r, 1200));
+
+      // ─────────────────────────────────────────
+      // Step 5 - Completion message
+      // ─────────────────────────────────────────
+      const changed = newCommit !== currentCommit;
+
+      await conn.sendMessage(chatId, {
+        text:
+          `${banner()}\n\n` +
+          `RESTART COMPLETED\n\n` +
+          `Current Update: ${newCommit}\n` +
+          `Previous Update: ${currentCommit}\n` +
+          `Update Time: ${formatDate(new Date())}\n\n` +
+          (changed
+            ? `New update pulled from source.`
+            : `No new updates. Bot restarted on current code.`) +
+          `\n\n${pullOutput}\n\n` +
+          `${settings.footer}`
+      });
+
+      // ─────────────────────────────────────────
+      // Step 6 - Restart
+      // ─────────────────────────────────────────
+      setTimeout(() => process.exit(0), 2500);
 
     } catch (error) {
       try {
