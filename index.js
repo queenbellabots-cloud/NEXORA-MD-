@@ -1,6 +1,7 @@
 /**
  * NEXORA MD - WhatsApp Bot
  * Owner auto-detect + persistent mode + rate limit
+ * Welcome message with image (axios buffer, no channel branding)
  */
 
 const express = require('express');
@@ -23,6 +24,7 @@ const settings = require('./settings');
 const fs = require('fs');
 const chalk = require('chalk');
 const path = require('path');
+const axios = require('axios');
 
 const { handleMessages, handleGroupParticipantUpdate } = require('./main');
 const PhoneNumber = require('awesome-phonenumber');
@@ -72,7 +74,31 @@ global.ghostMode = settings.ghostMode;
 global.antiCall = settings.antiCall;
 global.autoChatBot = settings.autoChatBot;
 
-// Recursive plugin loader
+// ─────────────────────────────────────────────
+// IMAGE FETCH HELPER (browser headers, buffer)
+// ─────────────────────────────────────────────
+async function fetchImageBuffer(url) {
+  const res = await axios.get(url, {
+    responseType: 'arraybuffer',
+    timeout: 20000,
+    maxRedirects: 5,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'image/*,*/*;q=0.8'
+    }
+  });
+
+  const type = res.headers['content-type'] || '';
+  if (!type.startsWith('image/')) {
+    throw new Error(`Not an image: content-type=${type}`);
+  }
+
+  return Buffer.from(res.data);
+}
+
+// ─────────────────────────────────────────────
+// PLUGIN LOADER (recursive, categorized)
+// ─────────────────────────────────────────────
 function loadCommands() {
   const rootDir = path.join(process.cwd(), 'plugins');
   if (!fs.existsSync(rootDir)) fs.mkdirSync(rootDir, { recursive: true });
@@ -211,6 +237,9 @@ async function startNexora() {
     Nexora.ev.on('creds.update', saveCreds);
     store.bind(Nexora.ev);
 
+    // ─────────────────────────────────────────
+    // AUTO-WIPE WRAPPER
+    // ─────────────────────────────────────────
     const originalSendMessage = Nexora.sendMessage.bind(Nexora);
     Nexora.sendMessage = async function(jid, content, options = {}) {
       const result = await originalSendMessage(jid, content, options);
@@ -236,6 +265,9 @@ async function startNexora() {
       return result;
     };
 
+    // ─────────────────────────────────────────
+    // MESSAGES.UPSERT
+    // ─────────────────────────────────────────
     Nexora.ev.on('messages.upsert', async chatUpdate => {
       try {
         if (chatUpdate.type !== 'notify') return;
@@ -336,6 +368,9 @@ async function startNexora() {
       }
     });
 
+    // ─────────────────────────────────────────
+    // ANTI-DELETE
+    // ─────────────────────────────────────────
     Nexora.ev.on('messages.update', async (updates) => {
       try {
         if (!global.antiDelete) return;
@@ -392,6 +427,9 @@ RECOVERED MESSAGE:`;
       }
     });
 
+    // ─────────────────────────────────────────
+    // ANTI-CALL
+    // ─────────────────────────────────────────
     Nexora.ev.on('call', async (calls) => {
       try {
         if (!global.antiCall) return;
@@ -403,18 +441,7 @@ RECOVERED MESSAGE:`;
           const userMsg = callMessages[call.from] || 'Call rejected. Please message instead.';
 
           try {
-            await Nexora.sendMessage(call.from, {
-              text: userMsg,
-              contextInfo: {
-                forwardingScore: 999,
-                isForwarded: true,
-                forwardedNewsletterMessageInfo: {
-                  newsletterJid: settings.channelId,
-                  newsletterName: settings.channelName,
-                  serverMessageId: 1
-                }
-              }
-            });
+            await Nexora.sendMessage(call.from, { text: userMsg });
           } catch (e) {}
 
           try {
@@ -426,6 +453,9 @@ RECOVERED MESSAGE:`;
       }
     });
 
+    // ─────────────────────────────────────────
+    // UTIL
+    // ─────────────────────────────────────────
     Nexora.decodeJid = (jid) => {
       if (!jid) return jid;
       if (/:\d+@/gi.test(jid)) {
@@ -453,6 +483,9 @@ RECOVERED MESSAGE:`;
 
     Nexora.public = true;
 
+    // ─────────────────────────────────────────
+    // CONNECTION UPDATE
+    // ─────────────────────────────────────────
     let pairingDone = false;
     Nexora.ev.on('connection.update', async (s) => {
       const { connection, lastDisconnect, qr } = s;
@@ -497,6 +530,7 @@ RECOVERED MESSAGE:`;
         logger.info(`Developer: ${settings.developerName}`);
         logger.success('Connected.');
 
+        // Save owner
         try {
           const botNumber = Nexora.user.id.split(':')[0];
           const botLid = Nexora.user.lid ? Nexora.user.lid.split(':')[0] : null;
@@ -506,12 +540,16 @@ RECOVERED MESSAGE:`;
           logger.warn(`Could not save owner: ${e.message}`);
         }
 
+        // Always online
         try {
           if (global.alwaysOnline) {
             await Nexora.sendPresenceUpdate('available');
           }
         } catch (e) {}
 
+        // ─────────────────────────────────────
+        // WELCOME MESSAGE WITH IMAGE (axios buffer)
+        // ─────────────────────────────────────
         setTimeout(async () => {
           try {
             const botNumber = Nexora.user.id.split(':')[0] + '@s.whatsapp.net';
@@ -519,9 +557,6 @@ RECOVERED MESSAGE:`;
 
             const userName = settings.botOwner || 'USER';
             const userNumber = settings.ownerNumber || Nexora.user.id.split(':')[0];
-
-            const welcomeImages = settings.welcomeImages || [];
-            const randomImage = welcomeImages[Math.floor(Math.random() * welcomeImages.length)];
 
             const welcomeText = `NEXORA MD
 Connected successfully.
@@ -537,50 +572,30 @@ Join our channel for updates.
 
 ${settings.footer}`;
 
+            const welcomeImages = Array.isArray(settings.welcomeImages) ? settings.welcomeImages : [];
+            const randomImage = welcomeImages.length > 0
+              ? welcomeImages[Math.floor(Math.random() * welcomeImages.length)]
+              : null;
+
+            let imageSent = false;
+
             if (randomImage) {
               try {
+                const buffer = await fetchImageBuffer(randomImage);
                 await Nexora.sendMessage(botNumber, {
-                  image: { url: randomImage },
-                  caption: welcomeText,
-                  contextInfo: {
-                    forwardingScore: 999,
-                    isForwarded: true,
-                    forwardedNewsletterMessageInfo: {
-                      newsletterJid: settings.channelId,
-                      newsletterName: settings.channelName,
-                      serverMessageId: 1
-                    }
-                  }
+                  image: buffer,
+                  caption: welcomeText
                 });
+                imageSent = true;
                 logger.success('Welcome message sent with image.');
-              } catch (imageError) {
-                await Nexora.sendMessage(botNumber, {
-                  text: welcomeText,
-                  contextInfo: {
-                    forwardingScore: 999,
-                    isForwarded: true,
-                    forwardedNewsletterMessageInfo: {
-                      newsletterJid: settings.channelId,
-                      newsletterName: settings.channelName,
-                      serverMessageId: 1
-                    }
-                  }
-                });
-                logger.success('Welcome message sent (text only).');
+              } catch (imgErr) {
+                logger.warn(`Welcome image failed: ${imgErr.message}`);
               }
-            } else {
-              await Nexora.sendMessage(botNumber, {
-                text: welcomeText,
-                contextInfo: {
-                  forwardingScore: 999,
-                  isForwarded: true,
-                  forwardedNewsletterMessageInfo: {
-                    newsletterJid: settings.channelId,
-                    newsletterName: settings.channelName,
-                    serverMessageId: 1
-                  }
-                }
-              });
+            }
+
+            if (!imageSent) {
+              await Nexora.sendMessage(botNumber, { text: welcomeText });
+              logger.success('Welcome message sent (text only).');
             }
           } catch (error) {
             logger.error(`Welcome message error: ${error.message}`);
@@ -607,6 +622,9 @@ ${settings.footer}`;
       }
     });
 
+    // ─────────────────────────────────────────
+    // GROUP PARTICIPANTS
+    // ─────────────────────────────────────────
     Nexora.ev.on('group-participants.update', async (update) => {
       await handleGroupParticipantUpdate(Nexora, update);
     });
@@ -619,6 +637,9 @@ ${settings.footer}`;
   }
 }
 
+// ─────────────────────────────────────────
+// ERROR HANDLERS
+// ─────────────────────────────────────────
 process.on('uncaughtException', (err) => {
   logger.error(`Uncaught Exception: ${err.message}`);
 });
