@@ -1,11 +1,32 @@
 /**
  * NEXORA MD - Menu Command
- * Safe version: never crashes on image or command list errors
+ * Safe version: image via axios buffer, no channel branding
  */
 
 const settings = require('../../settings');
+const axios = require('axios');
 
 const MENU_REACTIONS = ['👑', '✨', '🌟', '🔥', '💫', '⭐', '🎯', '🚀', '💎', '🎉'];
+
+// Fetch image as buffer with a browser user-agent
+async function fetchImageBuffer(url) {
+  const res = await axios.get(url, {
+    responseType: 'arraybuffer',
+    timeout: 20000,
+    maxRedirects: 5,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'image/*,*/*;q=0.8'
+    }
+  });
+
+  const type = res.headers['content-type'] || '';
+  if (!type.startsWith('image/')) {
+    throw new Error(`Not an image: content-type=${type}`);
+  }
+
+  return Buffer.from(res.data);
+}
 
 module.exports = {
   name: 'menu',
@@ -43,7 +64,7 @@ module.exports = {
       const seen = new Set();
       const cmdList = [];
 
-      commands.forEach((cmd, key) => {
+      commands.forEach((cmd) => {
         try {
           if (!cmd || typeof cmd !== 'object') return;
           if (!cmd.name || typeof cmd.name !== 'string') return;
@@ -77,7 +98,6 @@ module.exports = {
     let menu = '';
 
     try {
-      const sender = mek.key.participant || mek.key.remoteJid;
       const pushName = mek.pushName || 'User';
       const sortedCategories = Object.keys(categories).sort();
       const currentMode = global.botMode
@@ -129,26 +149,8 @@ module.exports = {
     }
 
     // ─────────────────────────────────────────────
-    // 4. SEND (image first, text fallback)
+    // 4. PICK IMAGE
     // ─────────────────────────────────────────────
-    let contextInfo = {};
-    try {
-      const sender = mek.key.participant || mek.key.remoteJid;
-      contextInfo = {
-        mentionedJid: [sender],
-        forwardingScore: 999,
-        isForwarded: true,
-        forwardedNewsletterMessageInfo: {
-          newsletterJid: settings.channelId || '',
-          newsletterName: settings.channelName || 'NEXORA MD',
-          serverMessageId: 1
-        }
-      };
-    } catch (e) {
-      console.log('[MENU] contextInfo failed:', e.message);
-    }
-
-    // Try image
     let imageUrl = null;
     try {
       const menuImages = Array.isArray(settings.menuImages) ? settings.menuImages : [];
@@ -159,12 +161,15 @@ module.exports = {
       console.log('[MENU] Image pick failed:', e.message);
     }
 
+    // ─────────────────────────────────────────────
+    // 5. SEND (buffer image first, then plain text)
+    // ─────────────────────────────────────────────
     if (imageUrl) {
       try {
+        const buffer = await fetchImageBuffer(imageUrl);
         await conn.sendMessage(chatId, {
-          image: { url: imageUrl },
-          caption: menu,
-          contextInfo
+          image: buffer,
+          caption: menu
         });
         return;
       } catch (imageErr) {
@@ -173,20 +178,11 @@ module.exports = {
       }
     }
 
-    // Fallback to text
+    // Fallback: plain text, no forwarding context
     try {
-      await conn.sendMessage(chatId, {
-        text: menu,
-        contextInfo
-      });
+      await conn.sendMessage(chatId, { text: menu });
     } catch (textErr) {
       console.log('[MENU] Text send failed:', textErr.message);
-      // Last resort: plain text, no contextInfo
-      try {
-        await conn.sendMessage(chatId, { text: menu });
-      } catch (finalErr) {
-        console.log('[MENU] Final fallback failed:', finalErr.message);
-      }
     }
   }
 };
