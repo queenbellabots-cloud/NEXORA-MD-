@@ -1,6 +1,7 @@
 /**
  * NEXORA MD - Main Handlers
  * Owner auto-detect + public/private mode + rate limit
+ * View-once commands moved to plugins/general/viewonce.js
  */
 
 const settings = require('./settings');
@@ -14,6 +15,9 @@ const logger = require('./lib/logger');
 
 const cleanNumber = owner.cleanNumber;
 
+// ═══════════════════════════════════════════════════════
+// EMOJI COMMAND DETECTION (for silent reveal)
+// ═══════════════════════════════════════════════════════
 function isEmojiCommand(text) {
   if (!text || text.length === 0) return false;
   const emojiRegex = /^[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{200D}]+$/u;
@@ -26,6 +30,9 @@ function getBotOwnerNumber() {
   return settings.ownerNumber || null;
 }
 
+// ═══════════════════════════════════════════════════════
+// MEDIA EXTRACTION
+// ═══════════════════════════════════════════════════════
 function extractMedia(quoted) {
   if (!quoted) return null;
   let inner = quoted;
@@ -51,6 +58,9 @@ async function downloadMedia(mediaInfo) {
   }
 }
 
+// ═══════════════════════════════════════════════════════
+// SILENT REVEAL (emoji reply to view-once)
+// ═══════════════════════════════════════════════════════
 async function silentReveal(conn, mek, chatId) {
   try {
     const quoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
@@ -92,61 +102,9 @@ ${settings.footer}`;
   }
 }
 
-async function visibleReveal(conn, mek, chatId) {
-  try {
-    const quoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-
-    if (!quoted) {
-      await conn.sendMessage(chatId, { text: 'Reply to a view-once image or video with .vv' });
-      return false;
-    }
-
-    const mediaInfo = extractMedia(quoted);
-    if (!mediaInfo) {
-      await conn.sendMessage(chatId, { text: 'No view-once media found.' });
-      return false;
-    }
-
-    await conn.sendMessage(chatId, { react: { text: '👁️', key: mek.key } });
-
-    const buffer = await downloadMedia(mediaInfo);
-    if (!buffer || buffer.length === 0) throw new Error('Download failed');
-
-    const caption = `VIEW-ONCE REVEALED
-
-Revealed by: NEXORA MD
-Time: ${new Date().toLocaleString()}
-
-${mediaInfo.caption ? `Caption:\n${mediaInfo.caption}` : ''}
-
-${settings.footer}`;
-
-    const content = {
-      caption,
-      contextInfo: {
-        forwardingScore: 999,
-        isForwarded: true,
-        forwardedNewsletterMessageInfo: {
-          newsletterJid: settings.channelId,
-          newsletterName: settings.channelName,
-          serverMessageId: 1
-        }
-      }
-    };
-
-    if (mediaInfo.type === 'image') content.image = buffer;
-    else if (mediaInfo.type === 'video') content.video = buffer;
-    else if (mediaInfo.type === 'audio') { content.audio = buffer; content.ptt = true; }
-
-    await conn.sendMessage(chatId, content);
-    return true;
-  } catch (error) {
-    logger.error(`Visible reveal error: ${error.message}`);
-    await conn.sendMessage(chatId, { text: `Failed: ${error.message}` });
-    return false;
-  }
-}
-
+// ═══════════════════════════════════════════════════════
+// AUTO CHATBOT (off by default)
+// ═══════════════════════════════════════════════════════
 async function handleAutoChatBot(conn, mek) {
   try {
     if (!global.autoChatBot) return;
@@ -201,6 +159,9 @@ async function handleAutoChatBot(conn, mek) {
   }
 }
 
+// ═══════════════════════════════════════════════════════
+// MAIN MESSAGE HANDLER
+// ═══════════════════════════════════════════════════════
 async function handleMessages(conn, chatUpdate, isOwnerFlag) {
   try {
     const mek = chatUpdate.messages[0];
@@ -232,6 +193,9 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
 
     const sender = mek.key.participant || mek.key.remoteJid;
 
+    // ─────────────────────────────────────────────
+    // EMOJI-ONLY REPLY → SILENT REVEAL (still here)
+    // ─────────────────────────────────────────────
     if (isEmojiCommand(rawCommand)) {
       const quoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
       if (quoted) {
@@ -244,36 +208,48 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
       return;
     }
 
+    // NOTE: .vv / .vo / .viewonce / .reveal are handled by
+    // plugins/general/viewonce.js
+
     const commandName = rawCommand.toLowerCase();
 
-    if (['vv', 'vo', 'viewonce', 'reveal'].includes(commandName)) {
-      await visibleReveal(conn, mek, chatId);
-      return;
-    }
-
+    // ─────────────────────────────────────────────
+    // OWNER DETECTION
+    // ─────────────────────────────────────────────
     const isBotOwner = owner.isOwner(sender, conn);
 
+    // ─────────────────────────────────────────────
+    // MODE CHECK (private = silent ignore for non-owner)
+    // ─────────────────────────────────────────────
     const currentMode = mode.getMode(settings.mode || 'public');
-    const ownerNumbers = owner.getOwnerNumbers(conn);
-
     if (currentMode === 'private' && !isBotOwner) {
       return;
     }
 
+    // ─────────────────────────────────────────────
+    // RATE LIMIT (10 per minute per user)
+    // ─────────────────────────────────────────────
     if (!isBotOwner && !rateLimit.isAllowed(sender, settings.rateLimitPerMinute || 10)) {
       return;
     }
 
+    // ─────────────────────────────────────────────
+    // PLUGIN DISPATCH
+    // ─────────────────────────────────────────────
     if (global.commands && global.commands.has(commandName)) {
       const command = global.commands.get(commandName);
 
       if (command.ownerOnly && !isBotOwner) {
-        await conn.sendMessage(chatId, { react: { text: settings.reactionError, key: mek.key } });
+        try {
+          await conn.sendMessage(chatId, { react: { text: settings.reactionError, key: mek.key } });
+        } catch (e) {}
         return;
       }
 
       if (command.groupOnly && !chatId.endsWith('@g.us')) {
-        await conn.sendMessage(chatId, { react: { text: settings.reactionError, key: mek.key } });
+        try {
+          await conn.sendMessage(chatId, { react: { text: settings.reactionError, key: mek.key } });
+        } catch (e) {}
         return;
       }
 
@@ -287,7 +263,9 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
       }
     } else {
       if (currentMode !== 'private') {
-        await conn.sendMessage(chatId, { text: `Unknown command: ${text}\nType ${prefix}menu` });
+        await conn.sendMessage(chatId, {
+          text: `Unknown command: ${text}\nType ${prefix}menu`
+        });
       }
     }
   } catch (error) {
@@ -295,6 +273,9 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
   }
 }
 
+// ═══════════════════════════════════════════════════════
+// GROUP PARTICIPANT UPDATE
+// ═══════════════════════════════════════════════════════
 async function handleGroupParticipantUpdate(conn, update) {
   try {
     logger.info(`Group update: ${update.id}`);
