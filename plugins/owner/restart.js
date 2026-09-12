@@ -1,7 +1,7 @@
 /**
- * NEXORA MD - Restart + Update Command
- * Pulls latest code from GitHub, then restarts
- * No emojis in output. No version shown. Update info only.
+ * NEXORA MD - Restart Command
+ * Checks for updates, then restarts.
+ * Auto-restart on Katabump works via process.exit(0).
  */
 
 const settings = require('../../settings');
@@ -13,10 +13,9 @@ const REPO_URL = 'https://github.com/queenbellabots-cloud/NEXORA-MD-';
 
 function run(cmd, cwd) {
   return new Promise((resolve) => {
-    exec(cmd, { cwd, timeout: 60000 }, (error, stdout, stderr) => {
+    exec(cmd, { cwd, timeout: 20000 }, (error, stdout, stderr) => {
       resolve({
         ok: !error,
-        code: error ? error.code : 0,
         stdout: (stdout || '').trim(),
         stderr: (stderr || '').trim(),
         error: error ? error.message : null
@@ -45,11 +44,52 @@ function formatDate(date) {
   });
 }
 
+async function checkForUpdates(botDir) {
+  // Verify this is a git repo
+  const gitCheck = await run('git rev-parse --is-inside-work-tree', botDir);
+  if (!gitCheck.ok || !gitCheck.stdout.includes('true')) {
+    return { supported: false, newCommits: [], currentCommit: 'unknown' };
+  }
+
+  // Current commit
+  const currentRes = await run('git rev-parse --short HEAD', botDir);
+  const currentCommit = currentRes.ok ? currentRes.stdout.split('\n')[0] : 'unknown';
+
+  // Fetch remote (fast)
+  const fetchRes = await run('git fetch --quiet origin HEAD', botDir);
+  if (!fetchRes.ok) {
+    return { supported: true, newCommits: [], currentCommit, fetchFailed: true };
+  }
+
+  // Compare
+  const logRes = await run(
+    'git log HEAD..origin/HEAD --pretty=format:%h|%s|%an --no-merges',
+    botDir
+  );
+
+  if (!logRes.ok || !logRes.stdout) {
+    return { supported: true, newCommits: [], currentCommit };
+  }
+
+  const newCommits = logRes.stdout
+    .split('\n')
+    .filter(line => line.trim())
+    .map(line => {
+      const [hash, ...rest] = line.split('|');
+      const author = rest.pop();
+      const message = rest.join('|');
+      return { hash, message, author };
+    })
+    .slice(0, 5);
+
+  return { supported: true, newCommits, currentCommit };
+}
+
 module.exports = {
   name: 'restart',
-  aliases: ['reboot', 'update', 'pull'],
+  aliases: ['reboot'],
   category: 'owner',
-  description: 'Pull updates from GitHub and restart the bot',
+  description: 'Check for updates and restart the bot',
   usage: '.restart',
   ownerOnly: true,
   react: '🔄',
@@ -61,123 +101,97 @@ module.exports = {
         return;
       }
 
+      await conn.sendMessage(chatId, { react: { text: '🔄', key: mek.key } });
+
       const botDir = process.cwd();
 
       // ─────────────────────────────────────────
       // Step 1 - Restarting message
       // ─────────────────────────────────────────
-      await conn.sendMessage(chatId, { react: { text: '🔄', key: mek.key } });
-
       await conn.sendMessage(chatId, {
         text:
           `${banner()}\n\n` +
           `RESTARTING NEXORA MD...\n\n` +
           `Checking for updates...\n` +
-          `Applying latest features...\n` +
-          `Restarting services...\n\n` +
+          `Preparing restart...\n\n` +
           `Status: Initializing...\n\n` +
           `${settings.footer}`
       });
 
-      await new Promise(r => setTimeout(r, 1200));
+      await new Promise(r => setTimeout(r, 800));
 
       // ─────────────────────────────────────────
-      // Step 2 - Gather git info
+      // Step 2 - Check for updates
       // ─────────────────────────────────────────
-      const gitCheck = await run('git rev-parse --is-inside-work-tree', botDir);
-      const isGitRepo = gitCheck.ok && gitCheck.stdout.includes('true');
-
-      let currentCommit = 'unknown';
-
-      if (isGitRepo) {
-        const commitRes = await run('git rev-parse --short HEAD', botDir);
-        if (commitRes.ok && commitRes.stdout) {
-          currentCommit = commitRes.stdout.split('\n')[0];
-        }
+      let updateInfo = { supported: false, newCommits: [], currentCommit: 'unknown' };
+      try {
+        updateInfo = await checkForUpdates(botDir);
+      } catch (e) {
+        console.log('[RESTART] Update check failed:', e.message);
       }
 
       const updateTime = formatDate(new Date());
+      const hasUpdates = updateInfo.newCommits.length > 0;
 
       // ─────────────────────────────────────────
-      // Step 3 - Updating message
+      // Step 3 - Report update status
       // ─────────────────────────────────────────
-      await conn.sendMessage(chatId, {
-        text:
-          `${banner()}\n\n` +
-          `UPDATING NEXORA MD...\n\n` +
-          `Current Update: ${currentCommit}\n` +
+      let reportText = `${banner()}\n\n`;
+
+      if (!updateInfo.supported) {
+        reportText +=
+          `UPDATE CHECK\n\n` +
+          `Git not available on this host.\n` +
+          `Current Commit: ${updateInfo.currentCommit}\n` +
+          `Update Time: ${updateTime}\n\n` +
+          `Restarting on current code...\n\n` +
+          `${settings.footer}`;
+      } else if (hasUpdates) {
+        reportText +=
+          `UPDATES AVAILABLE\n\n` +
+          `Current Commit: ${updateInfo.currentCommit}\n` +
           `Update Time: ${updateTime}\n` +
-          `Source: ${REPO_URL}\n\n` +
-          `Step 1/3: Downloading latest version...\n` +
-          `Step 2/3: Applying updates...\n` +
-          `Step 3/3: Restarting services...\n\n` +
-          `Status: Updating...\n\n` +
-          `${settings.footer}`
-      });
+          `New Commits: ${updateInfo.newCommits.length}\n\n` +
+          `Recent changes:\n`;
 
-      // ─────────────────────────────────────────
-      // Step 4 - Actual git pull
-      // ─────────────────────────────────────────
-      let pullOutput = '';
-      let newCommit = currentCommit;
+        updateInfo.newCommits.forEach((c, i) => {
+          reportText += `  ${i + 1}. ${c.hash} - ${c.message} (${c.author})\n`;
+        });
 
-      if (isGitRepo) {
-        const status = await run('git status --porcelain', botDir);
-        if (status.ok && status.stdout.length > 0) {
-          await run('git stash push -u -m "nexora-auto-stash"', botDir);
-        }
-
-        await run('git fetch --all', botDir);
-
-        const pull = await run('git pull origin HEAD', botDir);
-        if (pull.ok) {
-          pullOutput = 'Pull successful';
-          const newCommitRes = await run('git rev-parse --short HEAD', botDir);
-          if (newCommitRes.ok && newCommitRes.stdout) {
-            newCommit = newCommitRes.stdout.split('\n')[0];
-          }
-
-          try {
-            const pkgMtime = fs.statSync(path.join(botDir, 'package.json')).mtimeMs;
-            if ((Date.now() - pkgMtime) < 60000) {
-              pullOutput += ' + dependencies reinstalled';
-              await run('npm install --omit=dev', botDir);
-            }
-          } catch (e) {}
-        } else {
-          pullOutput = 'Pull failed: ' + (pull.stderr || 'unknown');
-        }
+        reportText +=
+          `\nSource: ${REPO_URL}\n\n` +
+          `Note: On Katabump, pull the repo manually from the panel, then restart.\n` +
+          `Or push and redeploy on Render/Railway/Koyeb.\n\n` +
+          `${settings.footer}`;
       } else {
-        pullOutput = 'Git not available on this host';
+        reportText +=
+          `NO UPDATES AVAILABLE\n\n` +
+          `Current Commit: ${updateInfo.currentCommit}\n` +
+          `Update Time: ${updateTime}\n\n` +
+          `Bot is on the latest code.\n\n` +
+          `${settings.footer}`;
       }
 
-      await new Promise(r => setTimeout(r, 1200));
+      await conn.sendMessage(chatId, { text: reportText });
+
+      await new Promise(r => setTimeout(r, 800));
 
       // ─────────────────────────────────────────
-      // Step 5 - Completion message
+      // Step 4 - Final message + exit
       // ─────────────────────────────────────────
-      const changed = newCommit !== currentCommit;
-
       await conn.sendMessage(chatId, {
         text:
           `${banner()}\n\n` +
           `RESTART COMPLETED\n\n` +
-          `Current Update: ${newCommit}\n` +
-          `Previous Update: ${currentCommit}\n` +
-          `Update Time: ${formatDate(new Date())}\n\n` +
-          (changed
-            ? `New update pulled from source.`
-            : `No new updates. Bot restarted on current code.`) +
-          `\n\n${pullOutput}\n\n` +
+          `Update Time: ${formatDate(new Date())}\n` +
+          `Status: Restarting process...\n\n` +
           `${settings.footer}`
       });
 
-      // ─────────────────────────────────────────
-      // Step 6 - Restart
-      // ─────────────────────────────────────────
-      setTimeout(() => process.exit(0), 2500);
+      setTimeout(() => process.exit(0), 2000);
 
     } catch (error) {
+      console.log('[RESTART] Error:', error.message);
       try {
         await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
       } catch (e) {}
