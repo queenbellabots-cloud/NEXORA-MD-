@@ -41,7 +41,7 @@ const settings = {
   // ═══════════════════════════════════════════════
   channelId: "120363411498601038@newsletter",
   channelLink: "https://whatsapp.com/channel/0029VbCwZHACXC3PNHgtMT31",
-  channelName: " NEXORA MD",
+  channelName: "NEXORA MD",
 
   // ═══════════════════════════════════════════════
   // CHANNEL REACTIONS
@@ -50,7 +50,7 @@ const settings = {
   channelReactionsCount: 50,
 
   // ═══════════════════════════════════════════════
-  // IMAGES
+  // IMAGES (rotating)
   // ═══════════════════════════════════════════════
   menuImages: [
     "https://yourimageshare.com/ib/Nkl9B3D6q9.png",
@@ -77,9 +77,9 @@ const settings = {
     contact: "+254755660053",
     report: "+254716388654",
     support: "+254755660053",
-    github: "Add your GitHub",
+    github: "https://github.com/queenbellabots-cloud/NEXORA-MD-",
     channel: "https://whatsapp.com/channel/0029VbCwZHACXC3PNHgtMT31",
-    email: "Add your email"
+    email: "rogersonyango87@gmail.com"
   },
 
   // ═══════════════════════════════════════════════
@@ -128,7 +128,7 @@ const settings = {
   storeWriteInterval: 10000,
 
   // ═══════════════════════════════════════════════
-  // ADVANCED - DO NOT CHANGE BELOW
+  // SESSION
   // ═══════════════════════════════════════════════
   sessionFolder: "./data/session"
 };
