@@ -21,13 +21,13 @@ Current Loc: ${info.currentLoc || 'Nakuru, Kenya'}
 Girlfriend: ${info.girlfriend || 'Currently Single'}
 Status: ${info.status || 'Taken by the code'}
 
-Contact: ${info.contact || ''}
-Report Issues: ${info.report || ''}
-Support: ${info.support || ''}
+Contact: ${info.contact || '+254755660053'}
+Report Issues: ${info.report || '+254716388654'}
+Support: ${info.support || '+254755660053'}
 
-GitHub: ${info.github || ''}
-Channel: ${info.channel || ''}
-Email: ${info.email || ''}
+GitHub: https://github.com/queenbellabots-cloud/NEXORA-MD-
+Email: rogersonyango87@gmail.com
+Channel: ${info.channel || 'https://whatsapp.com/channel/0029VbCwZHACXC3PNHgtMT31'}
 
 ${settings.footer}`;
 
