@@ -1,6 +1,7 @@
 /**
  * NEXORA MD - Main Handlers
- * Bulletproof owner detection + self-learning + public/private mode
+ * Simple MD-style owner check (paired number = owner)
+ * Public/private mode + rate limit
  */
 
 const settings = require('./settings');
@@ -24,8 +25,8 @@ function isEmojiCommand(text) {
 }
 
 function getBotOwnerNumber() {
-  const saved = owner.getSavedOwners();
-  if (saved && saved.length > 0) return saved[0];
+  const paired = owner.getPairedNumber ? owner.getPairedNumber() : '';
+  if (paired) return paired;
   return settings.ownerNumber || null;
 }
 
@@ -183,14 +184,6 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
     const sender = mek.key.participant || mek.key.remoteJid;
 
     // ─────────────────────────────────────────
-    // SELF-LEARNING (Layer 3)
-    // Every time the paired number sends anything, remember its format
-    // ─────────────────────────────────────────
-    try {
-      owner.rememberSender(sender, conn);
-    } catch (e) {}
-
-    // ─────────────────────────────────────────
     // EMOJI-ONLY REPLY → SILENT REVEAL
     // ─────────────────────────────────────────
     if (isEmojiCommand(rawCommand)) {
@@ -208,7 +201,7 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
     const commandName = rawCommand.toLowerCase();
 
     // ─────────────────────────────────────────
-    // OWNER DETECTION (layered)
+    // OWNER CHECK (simple: paired number = owner)
     // ─────────────────────────────────────────
     const isBotOwner = owner.isOwner(sender, conn);
 
