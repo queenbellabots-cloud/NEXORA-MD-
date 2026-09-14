@@ -12,26 +12,18 @@ const settings = {
   botOwner: "Rodgers",
   prefix: ".",
 
-  // ═══════════════════════════════════════════════
-  // OWNER NUMBER (Auto-detected from paired number)
-  // Leave empty to auto-detect
-  // ═══════════════════════════════════════════════
+  // Owner number — auto-detected from paired number
+  // Leave empty to fully rely on auto-detection
   ownerNumber: "254755660053",
 
-  // ═══════════════════════════════════════════════
-  // BOT MODE (Default) - "public" or "private"
-  // ═══════════════════════════════════════════════
+  // Default mode: "public" or "private"
   mode: "public",
 
   // ═══════════════════════════════════════════════
-  // DEVELOPER
+  // DEVELOPER + SUDO
   // ═══════════════════════════════════════════════
   developerNumber: "254755660053",
   developerName: "RODGERS",
-
-  // ═══════════════════════════════════════════════
-  // SUDO USERS (Extra admins)
-  // ═══════════════════════════════════════════════
   sudoUsers: [
     "254755660053"
   ],
@@ -43,26 +35,35 @@ const settings = {
   channelLink: "https://whatsapp.com/channel/0029VbCwZHACXC3PNHgtMT31",
   channelName: "NEXORA MD",
 
-  // ═══════════════════════════════════════════════
-  // CHANNEL REACTIONS
-  // ═══════════════════════════════════════════════
+  // Channel reactions (4-emoji rotation, X per message)
   channelReactions: ['🥰', '😘', '🤯', '🙄'],
   channelReactionsCount: 50,
 
   // ═══════════════════════════════════════════════
-  // IMAGES (rotating)
+  // WELCOME IMAGES (rotating)
   // ═══════════════════════════════════════════════
-  menuImages: [
-    "https://yourimageshare.com/ib/Nkl9B3D6q9.png",
-    "https://yourimageshare.com/ib/nky6GDc1JX.png",
-    "https://yourimageshare.com/ib/CGBwjF3kXQ.png"
+  welcomeImages: [
+    "https://imagetourl.cloud/8lefs2tlap9u.png",
+    "https://imagetourl.cloud/sk3gkrgw3ru6.png",
+    "https://imagetourl.cloud/uiwsbgle71il.png"
   ],
 
-  welcomeImages: [
-    "https://yourimageshare.com/ib/Nkl9B3D6q9.png",
-    "https://yourimageshare.com/ib/nky6GDc1JX.png",
-    "https://yourimageshare.com/ib/CGBwjF3kXQ.png"
-  ],
+  // ═══════════════════════════════════════════════
+  // MENU THEMES (10 themes, first is default)
+  // Switch with: .ui <number>
+  // ═══════════════════════════════════════════════
+  menuThemes: {
+    1:  { name: "Classic Box",     image: "https://imagetourl.cloud/8lefs2tlap9u.png" },
+    2:  { name: "Double Line",     image: "https://imagetourl.cloud/sk3gkrgw3ru6.png" },
+    3:  { name: "Minimal",         image: "https://imagetourl.cloud/uiwsbgle71il.png" },
+    4:  { name: "Bracketed",       image: "https://imagetourl.cloud/ex40swwr598h.jpg" },
+    5:  { name: "Starred",         image: "https://imagetourl.cloud/bu0m060dmlvk.jpg" },
+    6:  { name: "Arrow",           image: "https://imagetourl.cloud/mzjx4axnknxo.jpg" },
+    7:  { name: "Dotted",          image: "https://imagetourl.cloud/jg073ljbkas5.jpg" },
+    8:  { name: "Double Bracket",  image: "https://imagetourl.cloud/kbwvnoapvcq6.png" },
+    9:  { name: "Ornate Crown",    image: "https://imagetourl.cloud/pqk9yzx7p1u9.png" },
+    10: { name: "Gradient Frame",  image: "https://imagetourl.cloud/fwvm94dv4ysa.png" }
+  },
 
   // ═══════════════════════════════════════════════
   // OWNER INFO (shown in .owner command)
@@ -87,9 +88,7 @@ const settings = {
   // ═══════════════════════════════════════════════
   footer: "> © Powered by Rodgers",
 
-  // ═══════════════════════════════════════════════
-  // REACTION EMOJIS (only place emojis are used)
-  // ═══════════════════════════════════════════════
+  // Reaction emojis (only place emojis are used)
   reactionSuccess: "✅",
   reactionError: "❌",
 
@@ -112,24 +111,16 @@ const settings = {
   autoChatBot: false,
 
   // ═══════════════════════════════════════════════
-  // PAIRING / CONNECTION
+  // CONNECTION
   // ═══════════════════════════════════════════════
   usePairingCode: true,
   timeZone: "Africa/Nairobi",
 
   // ═══════════════════════════════════════════════
-  // WARN SYSTEM
+  // MISC
   // ═══════════════════════════════════════════════
   WARN_COUNT: 3,
-
-  // ═══════════════════════════════════════════════
-  // STORE
-  // ═══════════════════════════════════════════════
   storeWriteInterval: 10000,
-
-  // ═══════════════════════════════════════════════
-  // SESSION
-  // ═══════════════════════════════════════════════
   sessionFolder: "./data/session"
 };
 
