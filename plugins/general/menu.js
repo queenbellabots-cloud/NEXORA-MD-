@@ -1,14 +1,17 @@
 /**
- * NEXORA MD - Menu Command
- * Safe version: image via axios buffer, no channel branding
+ * NEXORA MD - Menu Command (Multi-Theme)
+ * Renders menu in the current theme. Image fetched via axios buffer.
  */
 
 const settings = require('../../settings');
 const axios = require('axios');
+const ui = require('../../lib/ui');
 
 const MENU_REACTIONS = ['👑', '✨', '🌟', '🔥', '💫', '⭐', '🎯', '🚀', '💎', '🎉'];
 
-// Fetch image as buffer with a browser user-agent
+// ─────────────────────────────────────────────
+// IMAGE FETCH
+// ─────────────────────────────────────────────
 async function fetchImageBuffer(url) {
   const res = await axios.get(url, {
     responseType: 'arraybuffer',
@@ -24,10 +27,363 @@ async function fetchImageBuffer(url) {
   if (!type.startsWith('image/')) {
     throw new Error(`Not an image: content-type=${type}`);
   }
-
   return Buffer.from(res.data);
 }
 
+// ─────────────────────────────────────────────
+// SYSTEM INFO HELPERS
+// ─────────────────────────────────────────────
+const START_TIME = Date.now();
+
+function uptime() {
+  const ms = Date.now() - START_TIME;
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}h ${m}m ${sec}s`;
+  if (m > 0) return `${m}m ${sec}s`;
+  return `${sec}s`;
+}
+
+function ramMB() {
+  return Math.round(process.memoryUsage().rss / 1024 / 1024);
+}
+
+function formatNow() {
+  return new Date().toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  });
+}
+
+// ─────────────────────────────────────────────
+// COMMAND LIST BUILDER
+// ─────────────────────────────────────────────
+function buildCategories() {
+  const commands = global.commands;
+  const categories = {};
+
+  if (!commands || typeof commands.forEach !== 'function') {
+    return { categories: {}, total: 0 };
+  }
+
+  const seen = new Set();
+  const list = [];
+
+  commands.forEach(cmd => {
+    try {
+      if (!cmd || typeof cmd !== 'object') return;
+      if (!cmd.name || seen.has(cmd.name)) return;
+      seen.add(cmd.name);
+      list.push({
+        name: cmd.name,
+        category: (typeof cmd.category === 'string' && cmd.category) ? cmd.category : 'general'
+      });
+    } catch (e) {}
+  });
+
+  list.forEach(c => {
+    const cat = String(c.category).toUpperCase();
+    if (!categories[cat]) categories[cat] = [];
+    categories[cat].push(c.name);
+  });
+
+  return { categories, total: list.length };
+}
+
+// ─────────────────────────────────────────────
+// SHARED INFO BLOCK
+// ─────────────────────────────────────────────
+function infoLines(pushName) {
+  const currentMode = global.botMode ? String(global.botMode).toUpperCase() : 'PUBLIC';
+  return {
+    botName: settings.botName || 'NEXORA MD',
+    owner: settings.botOwner || 'Rodgers',
+    dev: settings.developerName || 'RODGERS',
+    prefix: settings.prefix || '.',
+    user: pushName || 'User',
+    mode: currentMode,
+    uptime: uptime(),
+    ram: ramMB(),
+    platform: process.platform,
+    node: process.version,
+    time: formatNow()
+  };
+}
+
+// ─────────────────────────────────────────────
+// THEME RENDERERS
+// ─────────────────────────────────────────────
+
+// THEME 1 - Classic Box
+function render1(info, categories, total, prefix) {
+  let t = `╭━━━━━━━━━━━━━━━━━━━━━━━━╮\n`;
+  t += `┃  ${info.botName}\n`;
+  t += `┃  Powered by Rodgers\n`;
+  t += `╰━━━━━━━━━━━━━━━━━━━━━━━━╯\n\n`;
+  t += `┃ Owner: ${info.owner}\n`;
+  t += `┃ Prefix: ${prefix}\n`;
+  t += `┃ User: ${info.user}\n`;
+  t += `┃ Mode: ${info.mode}\n`;
+  t += `┃ Uptime: ${info.uptime}\n`;
+  t += `┃ RAM: ${info.ram} MB\n`;
+  t += `┃ Platform: ${info.platform}\n`;
+  t += `┃ Node: ${info.node}\n`;
+  t += `┃ Commands: ${total}\n`;
+  t += `┃ Time: ${info.time}\n`;
+
+  for (const cat of Object.keys(categories).sort()) {
+    t += `\n╭━━ [ ${cat} ] ━━╮\n`;
+    for (const cmd of categories[cat].sort()) {
+      t += `┃ ${prefix}${cmd}\n`;
+    }
+    t += `╰━━━━━━━━━━━━━━━━━━━━━━╯\n`;
+  }
+  t += `\n${settings.footer}`;
+  return t;
+}
+
+// THEME 2 - Double Line
+function render2(info, categories, total, prefix) {
+  let t = `══════════════════════════\n`;
+  t += `     ${info.botName}\n`;
+  t += `══════════════════════════\n\n`;
+  t += `Owner      : ${info.owner}\n`;
+  t += `Prefix     : ${prefix}\n`;
+  t += `User       : ${info.user}\n`;
+  t += `Mode       : ${info.mode}\n`;
+  t += `Uptime     : ${info.uptime}\n`;
+  t += `RAM        : ${info.ram} MB\n`;
+  t += `Platform   : ${info.platform}\n`;
+  t += `Node       : ${info.node}\n`;
+  t += `Commands   : ${total}\n`;
+  t += `Time       : ${info.time}\n`;
+
+  for (const cat of Object.keys(categories).sort()) {
+    t += `\n──── ${cat} ────\n`;
+    for (const cmd of categories[cat].sort()) {
+      t += `  ${prefix}${cmd}\n`;
+    }
+  }
+  t += `\n${settings.footer}`;
+  return t;
+}
+
+// THEME 3 - Minimal
+function render3(info, categories, total, prefix) {
+  let t = `${info.botName}\n─────────────\n\n`;
+  t += `Owner   ${info.owner}\n`;
+  t += `Prefix  ${prefix}\n`;
+  t += `User    ${info.user}\n`;
+  t += `Mode    ${info.mode}\n`;
+  t += `Uptime  ${info.uptime}\n`;
+  t += `RAM     ${info.ram} MB\n`;
+  t += `Node    ${info.node}\n`;
+  t += `Cmds    ${total}\n`;
+  t += `Time    ${info.time}\n`;
+
+  for (const cat of Object.keys(categories).sort()) {
+    t += `\n${cat.toLowerCase()}\n`;
+    for (const cmd of categories[cat].sort()) {
+      t += `  ${prefix}${cmd}\n`;
+    }
+  }
+  t += `\n${settings.footer}`;
+  return t;
+}
+
+// THEME 4 - Bracketed
+function render4(info, categories, total, prefix) {
+  let t = `[ ${info.botName} ]\n=============\n\n`;
+  t += `[ Owner ] ${info.owner}\n`;
+  t += `[ Prefix ] ${prefix}\n`;
+  t += `[ User ] ${info.user}\n`;
+  t += `[ Mode ] ${info.mode}\n`;
+  t += `[ Uptime ] ${info.uptime}\n`;
+  t += `[ RAM ] ${info.ram} MB\n`;
+  t += `[ Platform ] ${info.platform}\n`;
+  t += `[ Node ] ${info.node}\n`;
+  t += `[ Commands ] ${total}\n`;
+  t += `[ Time ] ${info.time}\n`;
+
+  for (const cat of Object.keys(categories).sort()) {
+    t += `\n[ ${cat} ]\n`;
+    for (const cmd of categories[cat].sort()) {
+      t += `> ${prefix}${cmd}\n`;
+    }
+  }
+  t += `\n${settings.footer}`;
+  return t;
+}
+
+// THEME 5 - Starred
+function render5(info, categories, total, prefix) {
+  let t = `* ${info.botName} *\n* * * * * * *\n\n`;
+  t += `Owner: ${info.owner}\n`;
+  t += `Prefix: ${prefix}\n`;
+  t += `User: ${info.user}\n`;
+  t += `Mode: ${info.mode}\n`;
+  t += `Uptime: ${info.uptime}\n`;
+  t += `RAM: ${info.ram} MB\n`;
+  t += `Platform: ${info.platform}\n`;
+  t += `Node: ${info.node}\n`;
+  t += `Commands: ${total}\n`;
+  t += `Time: ${info.time}\n`;
+
+  for (const cat of Object.keys(categories).sort()) {
+    t += `\n=== ${cat} ===\n`;
+    for (const cmd of categories[cat].sort()) {
+      t += `* ${prefix}${cmd}\n`;
+    }
+  }
+  t += `\n${settings.footer}`;
+  return t;
+}
+
+// THEME 6 - Arrow
+function render6(info, categories, total, prefix) {
+  let t = `>> ${info.botName} <<\n----------------\n\n`;
+  t += `> Owner: ${info.owner}\n`;
+  t += `> Prefix: ${prefix}\n`;
+  t += `> User: ${info.user}\n`;
+  t += `> Mode: ${info.mode}\n`;
+  t += `> Uptime: ${info.uptime}\n`;
+  t += `> RAM: ${info.ram} MB\n`;
+  t += `> Platform: ${info.platform}\n`;
+  t += `> Node: ${info.node}\n`;
+  t += `> Commands: ${total}\n`;
+  t += `> Time: ${info.time}\n`;
+
+  for (const cat of Object.keys(categories).sort()) {
+    t += `\n[ ${cat} ]\n`;
+    for (const cmd of categories[cat].sort()) {
+      t += `-> ${prefix}${cmd}\n`;
+    }
+  }
+  t += `\n${settings.footer}`;
+  return t;
+}
+
+// THEME 7 - Dotted
+function render7(info, categories, total, prefix) {
+  let t = `.....................\n   ${info.botName}\n.....................\n\n`;
+  t += `Owner . . . . ${info.owner}\n`;
+  t += `Prefix . . . . ${prefix}\n`;
+  t += `User . . . . ${info.user}\n`;
+  t += `Mode . . . . ${info.mode}\n`;
+  t += `Uptime . . . . ${info.uptime}\n`;
+  t += `RAM . . . . ${info.ram} MB\n`;
+  t += `Platform . . . . ${info.platform}\n`;
+  t += `Node . . . . ${info.node}\n`;
+  t += `Commands . . . . ${total}\n`;
+  t += `Time . . . . ${info.time}\n`;
+
+  for (const cat of Object.keys(categories).sort()) {
+    t += `\n. . . . ${cat} . . . .\n`;
+    for (const cmd of categories[cat].sort()) {
+      t += `  ${prefix}${cmd}\n`;
+    }
+  }
+  t += `\n${settings.footer}`;
+  return t;
+}
+
+// THEME 8 - Double Bracket PREMIUM
+function render8(info, categories, total, prefix) {
+  let t = `╔══════════════════════════╗\n`;
+  t += `║  ${info.botName}\n`;
+  t += `║  Premium Edition\n`;
+  t += `╚══════════════════════════╝\n\n`;
+  t += `» Owner    : ${info.owner}\n`;
+  t += `» Prefix   : ${prefix}\n`;
+  t += `» User     : ${info.user}\n`;
+  t += `» Mode     : ${info.mode}\n`;
+  t += `» Uptime   : ${info.uptime}\n`;
+  t += `» RAM      : ${info.ram} MB\n`;
+  t += `» Platform : ${info.platform}\n`;
+  t += `» Node     : ${info.node}\n`;
+  t += `» Commands : ${total}\n`;
+  t += `» Time     : ${info.time}\n`;
+
+  for (const cat of Object.keys(categories).sort()) {
+    t += `\n╔══ [ ${cat} ] ══╗\n`;
+    for (const cmd of categories[cat].sort()) {
+      t += `║ » ${prefix}${cmd}\n`;
+    }
+    t += `╚══════════════════════════╝\n`;
+  }
+  t += `\n${settings.footer}`;
+  return t;
+}
+
+// THEME 9 - Ornate Crown PREMIUM
+function render9(info, categories, total, prefix) {
+  let t = `╭━━━━━━━━━━━━━━━━━━━━━━━━╮\n`;
+  t += `┃ ◇ ${info.botName} ◇\n`;
+  t += `┃ Premium Edition\n`;
+  t += `╰━━━━━━━━━━━━━━━━━━━━━━━━╯\n\n`;
+  t += `◇ Owner    : ${info.owner}\n`;
+  t += `◇ Prefix   : ${prefix}\n`;
+  t += `◇ User     : ${info.user}\n`;
+  t += `◇ Mode     : ${info.mode}\n`;
+  t += `◇ Uptime   : ${info.uptime}\n`;
+  t += `◇ RAM      : ${info.ram} MB\n`;
+  t += `◇ Platform : ${info.platform}\n`;
+  t += `◇ Node     : ${info.node}\n`;
+  t += `◇ Commands : ${total}\n`;
+  t += `◇ Time     : ${info.time}\n`;
+
+  for (const cat of Object.keys(categories).sort()) {
+    t += `\n╭━━━◇ [ ${cat} ] ◇━━━╮\n`;
+    for (const cmd of categories[cat].sort()) {
+      t += `┃ ◇ ${prefix}${cmd}\n`;
+    }
+    t += `╰━━━━━━━━━━━━━━━━━━━━━━━━╯\n`;
+  }
+  t += `\n${settings.footer}`;
+  return t;
+}
+
+// THEME 10 - Gradient Frame PREMIUM
+function render10(info, categories, total, prefix) {
+  let t = `░▒▓█ ${info.botName} █▓▒░\n`;
+  t += `░▒▓ Premium Edition ▓▒░\n`;
+  t += `══════════════════════════\n\n`;
+  t += `▪ Owner    : ${info.owner}\n`;
+  t += `▪ Prefix   : ${prefix}\n`;
+  t += `▪ User     : ${info.user}\n`;
+  t += `▪ Mode     : ${info.mode}\n`;
+  t += `▪ Uptime   : ${info.uptime}\n`;
+  t += `▪ RAM      : ${info.ram} MB\n`;
+  t += `▪ Platform : ${info.platform}\n`;
+  t += `▪ Node     : ${info.node}\n`;
+  t += `▪ Commands : ${total}\n`;
+  t += `▪ Time     : ${info.time}\n`;
+
+  for (const cat of Object.keys(categories).sort()) {
+    t += `\n░▒▓ ${cat} ▓▒░\n`;
+    for (const cmd of categories[cat].sort()) {
+      t += `▪ ${prefix}${cmd}\n`;
+    }
+  }
+  t += `\n══════════════════════════\n`;
+  t += `${settings.footer}`;
+  return t;
+}
+
+const RENDERERS = {
+  1: render1, 2: render2, 3: render3, 4: render4, 5: render5,
+  6: render6, 7: render7, 8: render8, 9: render9, 10: render10
+};
+
+// ─────────────────────────────────────────────
+// COMMAND
+// ─────────────────────────────────────────────
 module.exports = {
   name: 'menu',
   aliases: ['help', 'allmenu', 'cmds'],
@@ -37,152 +393,61 @@ module.exports = {
   react: '👑',
 
   async execute(conn, mek, args, chatId, isOwner) {
-    // ─────────────────────────────────────────────
-    // 1. SAFE REACTION
-    // ─────────────────────────────────────────────
+    // React
     try {
       const randomReact = MENU_REACTIONS[Math.floor(Math.random() * MENU_REACTIONS.length)];
-      await conn.sendMessage(chatId, {
-        react: { text: randomReact, key: mek.key }
-      });
-    } catch (e) {
-      console.log('[MENU] Reaction failed:', e.message);
-    }
+      await conn.sendMessage(chatId, { react: { text: randomReact, key: mek.key } });
+    } catch (e) {}
 
-    // ─────────────────────────────────────────────
-    // 2. SAFE COMMAND LIST
-    // ─────────────────────────────────────────────
-    let totalCommands = 0;
-    const categories = {};
+    // Build info
+    const pushName = mek.pushName || 'User';
+    const info = infoLines(pushName);
+    const { categories, total } = buildCategories();
+    const prefix = settings.prefix || '.';
 
+    // Theme
+    let themeNum = 1;
     try {
-      const commands = global.commands;
-      if (!commands || typeof commands.forEach !== 'function') {
-        throw new Error('global.commands is not a Map');
-      }
-
-      const seen = new Set();
-      const cmdList = [];
-
-      commands.forEach((cmd) => {
-        try {
-          if (!cmd || typeof cmd !== 'object') return;
-          if (!cmd.name || typeof cmd.name !== 'string') return;
-          if (seen.has(cmd.name)) return;
-          seen.add(cmd.name);
-          cmdList.push({
-            name: cmd.name,
-            category: (typeof cmd.category === 'string' && cmd.category)
-              ? cmd.category
-              : 'general'
-          });
-        } catch (innerErr) {
-          console.log('[MENU] Skipped bad command:', innerErr.message);
-        }
-      });
-
-      cmdList.forEach(cmd => {
-        const cat = String(cmd.category).toUpperCase();
-        if (!categories[cat]) categories[cat] = [];
-        categories[cat].push(cmd.name);
-      });
-
-      totalCommands = cmdList.length;
+      themeNum = ui.getTheme();
     } catch (e) {
-      console.log('[MENU] Command list failed:', e.message);
+      console.log('[MENU] Theme read failed:', e.message);
     }
 
-    // ─────────────────────────────────────────────
-    // 3. BUILD MENU TEXT
-    // ─────────────────────────────────────────────
-    let menu = '';
-
+    const renderer = RENDERERS[themeNum] || RENDERERS[1];
+    let menuText = '';
     try {
-      const pushName = mek.pushName || 'User';
-      const sortedCategories = Object.keys(categories).sort();
-      const currentMode = global.botMode
-        ? String(global.botMode).toUpperCase()
-        : 'PUBLIC';
-
-      const botName = settings.botName || 'NEXORA MD';
-      const botOwner = settings.botOwner || 'Rodgers';
-      const devName = settings.developerName || 'RODGERS';
-      const prefix = settings.prefix || '.';
-      const footer = settings.footer || '';
-
-      menu += '====================\n';
-      menu += '   ' + botName + '\n';
-      menu += '   Powered by Rodgers\n';
-      menu += '====================\n';
-      menu += '       BOT INFO\n';
-      menu += '====================\n';
-      menu += 'User: ' + pushName + '\n';
-      menu += 'Owner: ' + botOwner + '\n';
-      menu += 'Developer: ' + devName + '\n';
-      menu += 'Prefix: ' + prefix + '\n';
-      menu += 'Commands: ' + totalCommands + '\n';
-      menu += 'Mode: ' + currentMode + '\n\n';
-
-      menu += '====================\n';
-      menu += '   COMMAND LIST\n';
-      menu += '====================\n';
-
-      if (sortedCategories.length === 0) {
-        menu += '\nNo commands loaded yet.\n';
-      } else {
-        for (const category of sortedCategories) {
-          menu += '\n[' + category + ']\n';
-          const list = categories[category].slice().sort();
-          for (const cmdName of list) {
-            menu += '  ' + prefix + cmdName + '\n';
-          }
-        }
-      }
-
-      menu += '\n====================\n';
-      menu += 'Join our channel for updates.\n';
-      menu += '====================\n\n';
-      menu += footer;
+      menuText = renderer(info, categories, total, prefix);
     } catch (e) {
-      console.log('[MENU] Text build failed:', e.message);
-      menu = 'Menu error. Check console for details.';
+      console.log('[MENU] Render failed:', e.message);
+      menuText = `Menu error. Theme: ${themeNum}`;
     }
 
-    // ─────────────────────────────────────────────
-    // 4. PICK IMAGE
-    // ─────────────────────────────────────────────
-    let imageUrl = null;
+    // Image
+    let themeImage = null;
     try {
-      const menuImages = Array.isArray(settings.menuImages) ? settings.menuImages : [];
-      if (menuImages.length > 0) {
-        imageUrl = menuImages[Math.floor(Math.random() * menuImages.length)];
+      if (settings.menuThemes && settings.menuThemes[themeNum] && settings.menuThemes[themeNum].image) {
+        themeImage = settings.menuThemes[themeNum].image;
       }
-    } catch (e) {
-      console.log('[MENU] Image pick failed:', e.message);
-    }
+    } catch (e) {}
 
-    // ─────────────────────────────────────────────
-    // 5. SEND (buffer image first, then plain text)
-    // ─────────────────────────────────────────────
-    if (imageUrl) {
+    if (themeImage) {
       try {
-        const buffer = await fetchImageBuffer(imageUrl);
+        const buffer = await fetchImageBuffer(themeImage);
         await conn.sendMessage(chatId, {
           image: buffer,
-          caption: menu
+          caption: menuText
         });
         return;
-      } catch (imageErr) {
-        console.log('[MENU] Image send failed:', imageErr.message);
-        console.log('[MENU] Falling back to text...');
+      } catch (imgErr) {
+        console.log('[MENU] Image failed:', imgErr.message);
       }
     }
 
-    // Fallback: plain text, no forwarding context
+    // Text fallback
     try {
-      await conn.sendMessage(chatId, { text: menu });
+      await conn.sendMessage(chatId, { text: menuText });
     } catch (textErr) {
-      console.log('[MENU] Text send failed:', textErr.message);
+      console.log('[MENU] Text failed:', textErr.message);
     }
   }
 };
