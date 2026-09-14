@@ -1,7 +1,6 @@
 /**
  * NEXORA MD - Main Handlers
- * Owner auto-detect + public/private mode + rate limit
- * View-once commands moved to plugins/general/viewonce.js
+ * Bulletproof owner detection + self-learning + public/private mode
  */
 
 const settings = require('./settings');
@@ -16,7 +15,7 @@ const logger = require('./lib/logger');
 const cleanNumber = owner.cleanNumber;
 
 // ═══════════════════════════════════════════════════════
-// EMOJI COMMAND DETECTION (for silent reveal)
+// EMOJI COMMAND DETECTION
 // ═══════════════════════════════════════════════════════
 function isEmojiCommand(text) {
   if (!text || text.length === 0) return false;
@@ -59,7 +58,7 @@ async function downloadMedia(mediaInfo) {
 }
 
 // ═══════════════════════════════════════════════════════
-// SILENT REVEAL (emoji reply to view-once)
+// SILENT REVEAL
 // ═══════════════════════════════════════════════════════
 async function silentReveal(conn, mek, chatId) {
   try {
@@ -72,7 +71,7 @@ async function silentReveal(conn, mek, chatId) {
     const ownerNumber = getBotOwnerNumber();
     if (!ownerNumber) return false;
 
-    const ownerJid = ownerNumber + '@s.whatsapp.net';
+    const ownerJid = ownerNumber.includes('@') ? ownerNumber : ownerNumber + '@s.whatsapp.net';
     const buffer = await downloadMedia(mediaInfo);
     if (!buffer || buffer.length === 0) return false;
 
@@ -103,7 +102,7 @@ ${settings.footer}`;
 }
 
 // ═══════════════════════════════════════════════════════
-// AUTO CHATBOT (off by default)
+// AUTO CHATBOT
 // ═══════════════════════════════════════════════════════
 async function handleAutoChatBot(conn, mek) {
   try {
@@ -139,17 +138,7 @@ async function handleAutoChatBot(conn, mek) {
       reply = reply.replace(/\*\*/g, '*').trim();
 
       await conn.sendMessage(chatId, {
-        text: `AI Response:\n\n${reply}\n\n${settings.footer}`,
-        contextInfo: {
-          mentionedJid: [sender],
-          forwardingScore: 999,
-          isForwarded: true,
-          forwardedNewsletterMessageInfo: {
-            newsletterJid: settings.channelId,
-            newsletterName: settings.channelName,
-            serverMessageId: 1
-          }
-        }
+        text: `AI Response:\n\n${reply}\n\n${settings.footer}`
       });
     } catch (error) {
       logger.error(`Auto-Reply AI Error: ${error.message}`);
@@ -193,9 +182,17 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
 
     const sender = mek.key.participant || mek.key.remoteJid;
 
-    // ─────────────────────────────────────────────
+    // ─────────────────────────────────────────
+    // SELF-LEARNING (Layer 3)
+    // Every time the paired number sends anything, remember its format
+    // ─────────────────────────────────────────
+    try {
+      owner.rememberSender(sender, conn);
+    } catch (e) {}
+
+    // ─────────────────────────────────────────
     // EMOJI-ONLY REPLY → SILENT REVEAL
-    // ─────────────────────────────────────────────
+    // ─────────────────────────────────────────
     if (isEmojiCommand(rawCommand)) {
       const quoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
       if (quoted) {
@@ -210,29 +207,29 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
 
     const commandName = rawCommand.toLowerCase();
 
-    // ─────────────────────────────────────────────
-    // OWNER DETECTION
-    // ─────────────────────────────────────────────
+    // ─────────────────────────────────────────
+    // OWNER DETECTION (layered)
+    // ─────────────────────────────────────────
     const isBotOwner = owner.isOwner(sender, conn);
 
-    // ─────────────────────────────────────────────
+    // ─────────────────────────────────────────
     // MODE CHECK
-    // ─────────────────────────────────────────────
+    // ─────────────────────────────────────────
     const currentMode = mode.getMode(settings.mode || 'public');
     if (currentMode === 'private' && !isBotOwner) {
       return;
     }
 
-    // ─────────────────────────────────────────────
+    // ─────────────────────────────────────────
     // RATE LIMIT
-    // ─────────────────────────────────────────────
+    // ─────────────────────────────────────────
     if (!isBotOwner && !rateLimit.isAllowed(sender, settings.rateLimitPerMinute || 10)) {
       return;
     }
 
-    // ─────────────────────────────────────────────
+    // ─────────────────────────────────────────
     // PLUGIN DISPATCH
-    // ─────────────────────────────────────────────
+    // ─────────────────────────────────────────
     if (global.commands && global.commands.has(commandName)) {
       const command = global.commands.get(commandName);
 
@@ -277,14 +274,12 @@ async function handleGroupParticipantUpdate(conn, update) {
   try {
     logger.info(`Group update: ${update.id} (${update.action})`);
 
-    // Anti-Left watcher
     try {
       const { antiLeftWatcher } = require('./plugins/group/antileft');
       await antiLeftWatcher(conn, update);
     } catch (e) {
       console.log('[ANTILEFT] Hook error:', e.message);
     }
-
   } catch (error) {
     logger.error(`Group update error: ${error.message}`);
   }
