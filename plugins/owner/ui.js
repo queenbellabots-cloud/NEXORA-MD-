@@ -12,7 +12,7 @@ module.exports = {
   category: 'owner',
   description: 'Switch menu theme',
   usage: '.ui <number>',
-  ownerOnly: true,
+  ownerOnly: false,
   react: '✅',
 
   async execute(conn, mek, args, chatId, isOwner) {
