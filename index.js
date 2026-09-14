@@ -3,6 +3,7 @@
  * Owner auto-detect + persistent mode + rate limit
  * Welcome message with image (axios buffer, no channel branding)
  * Anti-delete state loaded from data/antidelete.json
+ * Status emojis loaded from data/status.json
  */
 
 const express = require('express');
@@ -80,10 +81,30 @@ global.autoTyping = {
   status: true
 };
 global.alwaysOnline = settings.alwaysOnline;
-global.autoStatusFlags = {
-  seen: settings.autoStatusSeen,
-  react: settings.autoStatusReact
-};
+
+// ─────────────────────────────────────────────
+// AUTO STATUS FLAGS: load from data/status.json
+// ─────────────────────────────────────────────
+try {
+  if (fs.existsSync('./data/status.json')) {
+    const sd = JSON.parse(fs.readFileSync('./data/status.json', 'utf8'));
+    global.autoStatusFlags = {
+      seen: sd.view !== false,
+      react: sd.react !== false
+    };
+  } else {
+    global.autoStatusFlags = {
+      seen: settings.autoStatusSeen,
+      react: settings.autoStatusReact
+    };
+  }
+} catch (e) {
+  global.autoStatusFlags = {
+    seen: settings.autoStatusSeen,
+    react: settings.autoStatusReact
+  };
+}
+
 global.customStatus = 'composing';
 global.ghostMode = settings.ghostMode;
 global.antiCall = settings.antiCall;
@@ -110,6 +131,31 @@ async function fetchImageBuffer(url) {
 
   return Buffer.from(res.data);
 }
+
+// ─────────────────────────────────────────────
+// STATUS REACTION EMOJIS (loadable from file)
+// ─────────────────────────────────────────────
+const DEFAULT_REACTION_EMOJIS = [
+  '🔥', '❤️', '😍', '👑', '✨', '🌟', '💯', '🎉', '💪', '👏',
+  '🙌', '🤩', '😎', '💥', '⭐', '🌈', '🎊', '🎈', '💖', '💗',
+  '👍', '🙏', '✌️', '🤝', '😊', '😃', '😂', '🥳', '🤗', '🤔'
+];
+
+function loadReactionEmojis() {
+  try {
+    if (fs.existsSync('./data/status.json')) {
+      const data = JSON.parse(fs.readFileSync('./data/status.json', 'utf8'));
+      if (Array.isArray(data.emojis) && data.emojis.length > 0) {
+        return data.emojis;
+      }
+    }
+  } catch (e) {
+    console.log('[NEXORA] Emoji load failed:', e.message);
+  }
+  return DEFAULT_REACTION_EMOJIS.slice();
+}
+
+let REACTION_EMOJIS = loadReactionEmojis();
 
 // ─────────────────────────────────────────────
 // PLUGIN LOADER (recursive, categorized)
@@ -177,12 +223,6 @@ setInterval(() => {
 const CHANNEL_ID = settings.channelId;
 const CHANNEL_REACTIONS = settings.channelReactions;
 const TOTAL_CHANNEL_REACTIONS = settings.channelReactionsCount;
-
-const REACTION_EMOJIS = [
-  '🔥', '❤️', '😍', '👑', '✨', '🌟', '💯', '🎉', '💪', '👏',
-  '🙌', '🤩', '😎', '💥', '⭐', '🌈', '🎊', '🎈', '💖', '💗',
-  '👍', '🙏', '✌️', '🤝', '😊', '😃', '😂', '🥳', '🤗', '🤔'
-];
 
 const pairingCode = settings.usePairingCode;
 
@@ -344,6 +384,9 @@ async function startNexora() {
         try {
           if (chatId === 'status@broadcast') {
             if (!mek || !mek.message) return;
+
+            // Reload emojis in case owner changed them
+            REACTION_EMOJIS = loadReactionEmojis();
 
             const autoView = global.autoStatusFlags?.seen !== undefined ? global.autoStatusFlags.seen : true;
             const autoReact = global.autoStatusFlags?.react !== undefined ? global.autoStatusFlags.react : true;
