@@ -1,6 +1,7 @@
 /**
  * NEXORA MD - WhatsApp Bot
- * Bulletproof owner + auto-directory setup + channel branding
+ * Simple MD-style owner detection (paired number = owner)
+ * Auto-directory setup + channel branding + welcome message
  */
 
 const express = require('express');
@@ -25,9 +26,7 @@ const chalk = require('chalk');
 const path = require('path');
 const axios = require('axios');
 
-// ─────────────────────────────────────────────
-// AUTO-CREATE DATA FOLDERS (worldwide user-friendly)
-// ─────────────────────────────────────────────
+// Auto-create data folders for worldwide users
 try {
   if (!fs.existsSync('./data')) fs.mkdirSync('./data', { recursive: true });
   if (!fs.existsSync('./data/session')) fs.mkdirSync('./data/session', { recursive: true });
@@ -463,7 +462,7 @@ Time: ${new Date().toLocaleString()}
 
 RECOVERED MESSAGE:`;
 
-            const ownerJid = (settings.ownerNumber || owner.getOwnerNumbers(Nexora)[0]) + '@s.whatsapp.net';
+            const ownerJid = (owner.getPairedNumber() || settings.ownerNumber) + '@s.whatsapp.net';
 
             await Nexora.sendMessage(ownerJid, {
               text: caption,
@@ -588,27 +587,15 @@ RECOVERED MESSAGE:`;
         logger.info(`Owner    : ${settings.botOwner}`);
         logger.success('Connected.');
 
-        // Save owner
+        // Log paired number
         try {
-          const botNumber = Nexora.user.id.split(':')[0];
-          const botLid = Nexora.user.lid ? Nexora.user.lid.split(':')[0] : null;
-          owner.saveOwner(botNumber, botLid);
-          logger.success(`Owner saved`);
-        } catch (e) {
-          logger.warn(`Could not save owner: ${e.message}`);
-        }
-
-        // Re-save after LID is populated
-        setTimeout(() => {
-          try {
-            if (Nexora.user && Nexora.user.lid) {
-              const botNumber = Nexora.user.id.split(':')[0];
-              const botLid = Nexora.user.lid.split(':')[0];
-              owner.saveOwner(botNumber, botLid);
-              logger.success(`Owner re-saved with LID`);
-            }
-          } catch (e) {}
-        }, 8000);
+          const paired = owner.getPairedNumber ? owner.getPairedNumber() : '';
+          if (paired) {
+            logger.success(`Paired number loaded`);
+          } else {
+            logger.warn('Could not read paired number from creds.json');
+          }
+        } catch (e) {}
 
         // Always online
         try {
