@@ -8,11 +8,16 @@ const settings = require('../../settings');
 
 const dataPath = './data/status.json';
 
-const DEFAULT_EMOJIS = [
-  '🔥', '❤️', '😍', '👑', '✨', '🌟', '💯', '🎉', '💪', '👏',
-  '🙌', '🤩', '😎', '💥', '⭐', '🌈', '🎊', '🎈', '💖', '💗',
-  '👍', '🙏', '✌️', '🤝', '😊', '😃', '😂', '🥳', '🤗', '🤔'
-];
+function getDefaultEmojis() {
+  if (Array.isArray(settings.statusReactionEmojis) && settings.statusReactionEmojis.length > 0) {
+    return settings.statusReactionEmojis.slice();
+  }
+  return [
+    '🔥', '❤️', '😍', '👑', '✨', '🌟', '💯', '🎉', '💪', '👏',
+    '🙌', '🤩', '😎', '💥', '⭐', '🌈', '🎊', '🎈', '💖', '💗',
+    '👍', '🙏', '✌️', '🤝', '😊', '😃', '😂', '🥳', '🤗', '🤔'
+  ];
+}
 
 if (!fs.existsSync('./data')) fs.mkdirSync('./data', { recursive: true });
 
@@ -25,13 +30,13 @@ function readStore() {
         react: data.react !== false,
         emojis: Array.isArray(data.emojis) && data.emojis.length > 0
           ? data.emojis
-          : DEFAULT_EMOJIS.slice()
+          : getDefaultEmojis()
       };
     }
   } catch (e) {
     console.log('[SREMOJI] Read failed:', e.message);
   }
-  return { view: true, react: true, emojis: DEFAULT_EMOJIS.slice() };
+  return { view: true, react: true, emojis: getDefaultEmojis() };
 }
 
 function writeStore(data) {
@@ -62,9 +67,6 @@ module.exports = {
       const input = args.join(' ').trim();
       const lower = input.toLowerCase();
 
-      // ─────────────────────────────────────────
-      // OFF
-      // ─────────────────────────────────────────
       if (lower === 'off') {
         store.react = false;
         writeStore(store);
@@ -77,9 +79,6 @@ module.exports = {
         return;
       }
 
-      // ─────────────────────────────────────────
-      // ON (re-enable with current list)
-      // ─────────────────────────────────────────
       if (lower === 'on') {
         store.react = true;
         writeStore(store);
@@ -92,29 +91,23 @@ module.exports = {
         return;
       }
 
-      // ─────────────────────────────────────────
-      // RESET
-      // ─────────────────────────────────────────
       if (lower === 'reset') {
-        store.emojis = DEFAULT_EMOJIS.slice();
+        store.emojis = getDefaultEmojis();
         writeStore(store);
         if (global.autoStatusFlags) global.autoStatusFlags.react = true;
 
         await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
         await conn.sendMessage(chatId, {
-          text: `Reaction emojis reset to defaults.\n\n${settings.footer}`
+          text:
+            `Reaction emojis reset to defaults.\n\n` +
+            `Count: ${store.emojis.length}\n\n` +
+            `${settings.footer}`
         });
         return;
       }
 
-      // ─────────────────────────────────────────
-      // SET NEW LIST
-      // ─────────────────────────────────────────
       if (input) {
-        // Split on comma OR whitespace
         const rawParts = input.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
-
-        // Filter valid single emoji strings
         const emojiRegex = /^[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{200D}\u{1F1E6}-\u{1F1FF}]+$/u;
         const valid = rawParts.filter(e => emojiRegex.test(e));
 
@@ -147,13 +140,8 @@ module.exports = {
         return;
       }
 
-      // ─────────────────────────────────────────
-      // STATUS (no args)
-      // ─────────────────────────────────────────
       const reactStatus = store.react ? 'ENABLED' : 'DISABLED';
       const emojiCount = store.emojis.length;
-
-      // Preview first 30 to avoid huge messages
       const preview = store.emojis.slice(0, 30).join(' ');
       const extra = emojiCount > 30 ? ` ... (+${emojiCount - 30} more)` : '';
 
@@ -171,7 +159,6 @@ module.exports = {
           `  ${settings.prefix || '.'}sremoji reset       - restore defaults\n\n` +
           `${settings.footer}`
       });
-
     } catch (error) {
       console.log('[SREMOJI] Error:', error.message);
       try { await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } }); } catch (e) {}
