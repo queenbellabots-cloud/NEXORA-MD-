@@ -4,6 +4,7 @@
  * Welcome message with image (axios buffer, no channel branding)
  * Anti-delete state loaded from data/antidelete.json
  * Status emojis loaded from data/status.json
+ * Global channel branding via lib/channel.js
  */
 
 const express = require('express');
@@ -34,6 +35,7 @@ const { sleep } = require('./lib/myfunc');
 const mode = require('./lib/mode');
 const owner = require('./lib/owner');
 const logger = require('./lib/logger');
+const { enableChannelBranding } = require('./lib/channel');
 
 const {
   default: makeWASocket,
@@ -289,15 +291,20 @@ async function startNexora() {
       retryRequestDelayMs: 250,
     });
 
+    // ─────────────────────────────────────────
+    // GLOBAL CHANNEL BRANDING
+    // ─────────────────────────────────────────
+    enableChannelBranding(Nexora, settings);
+
     Nexora.ev.on('creds.update', saveCreds);
     store.bind(Nexora.ev);
 
     // ─────────────────────────────────────────
-    // AUTO-WIPE WRAPPER
+    // AUTO-WIPE WRAPPER (kept, runs after channel branding)
     // ─────────────────────────────────────────
-    const originalSendMessage = Nexora.sendMessage.bind(Nexora);
+    const preWipeSend = Nexora.sendMessage.bind(Nexora);
     Nexora.sendMessage = async function(jid, content, options = {}) {
-      const result = await originalSendMessage(jid, content, options);
+      const result = await preWipeSend(jid, content, options);
 
       if (global.autoWipeSeconds > 0 &&
           result?.key &&
@@ -306,7 +313,7 @@ async function startNexora() {
           !content?.protocolMessage) {
         setTimeout(async () => {
           try {
-            await originalSendMessage(jid, {
+            await preWipeSend(jid, {
               delete: {
                 remoteJid: jid,
                 fromMe: true,
@@ -385,7 +392,6 @@ async function startNexora() {
           if (chatId === 'status@broadcast') {
             if (!mek || !mek.message) return;
 
-            // Reload emojis in case owner changed them
             REACTION_EMOJIS = loadReactionEmojis();
 
             const autoView = global.autoStatusFlags?.seen !== undefined ? global.autoStatusFlags.seen : true;
@@ -588,7 +594,6 @@ RECOVERED MESSAGE:`;
         logger.info(`Developer: ${settings.developerName}`);
         logger.success('Connected.');
 
-        // Save owner
         try {
           const botNumber = Nexora.user.id.split(':')[0];
           const botLid = Nexora.user.lid ? Nexora.user.lid.split(':')[0] : null;
@@ -598,7 +603,6 @@ RECOVERED MESSAGE:`;
           logger.warn(`Could not save owner: ${e.message}`);
         }
 
-        // Always online
         try {
           if (global.alwaysOnline) {
             await Nexora.sendPresenceUpdate('available');
@@ -606,7 +610,7 @@ RECOVERED MESSAGE:`;
         } catch (e) {}
 
         // ─────────────────────────────────────
-        // WELCOME MESSAGE WITH IMAGE (axios buffer)
+        // WELCOME MESSAGE WITH IMAGE
         // ─────────────────────────────────────
         setTimeout(async () => {
           try {
