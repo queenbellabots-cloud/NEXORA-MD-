@@ -1,4 +1,5 @@
 const settings = require('../../settings');
+const owner = require('../../lib/owner');
 
 module.exports = {
   name: 'owner',
@@ -12,22 +13,34 @@ module.exports = {
 
     const info = settings.ownerInfo || {};
 
+    // Default to paired bot number if settings hasn't been customized
+    const pairedNumber = conn && conn.user
+      ? owner.cleanNumber(conn.user.id)
+      : 'unknown';
+
+    // Only show custom contact if user has edited settings.js (not default Rodgers value)
+    const isCustomized = info.contact && info.contact !== "+254755660053";
+    const displayContact = isCustomized ? info.contact : ('+' + pairedNumber);
+
+    // Mask for privacy in logs/status
+    const maskedPaired = owner.maskNumber(pairedNumber);
+
     const text = `NEXORA MD OWNER
 
-Name: ${info.name || 'Rodgers Onyango'}
+Name: ${info.name || 'Bot Owner'}
 Role: ${info.role || 'Developer and Owner'}
-Location: ${info.location || 'Kisumu, Kenya'}
-Current Loc: ${info.currentLoc || 'Nakuru, Kenya'}
-Girlfriend: ${info.girlfriend || 'Currently Single'}
-Status: ${info.status || 'Taken by the code'}
+Location: ${info.location || 'Not set'}
+Status: ${info.status || 'Online'}
 
-Contact: ${info.contact || '+254755660053'}
-Report Issues: ${info.report || '+254716388654'}
-Support: ${info.support || '+254755660053'}
+Contact: ${displayContact}
+Report Issues: ${info.report || 'Not set'}
+Support: ${info.support || 'Not set'}
 
-GitHub: https://github.com/queenbellabots-cloud/NEXORA-MD-
-Email: rogersonyango87@gmail.com
-Channel: ${info.channel || 'https://whatsapp.com/channel/0029VbCwZHACXC3PNHgtMT31'}
+GitHub: ${info.github || 'Not set'}
+Email: ${info.email || 'Not set'}
+Channel: ${info.channel || 'Not set'}
+
+Paired Number: ${maskedPaired}
 
 ${settings.footer}`;
 
