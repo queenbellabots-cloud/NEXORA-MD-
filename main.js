@@ -194,7 +194,7 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
     const sender = mek.key.participant || mek.key.remoteJid;
 
     // ─────────────────────────────────────────────
-    // EMOJI-ONLY REPLY → SILENT REVEAL (still here)
+    // EMOJI-ONLY REPLY → SILENT REVEAL
     // ─────────────────────────────────────────────
     if (isEmojiCommand(rawCommand)) {
       const quoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
@@ -208,9 +208,6 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
       return;
     }
 
-    // NOTE: .vv / .vo / .viewonce / .reveal are handled by
-    // plugins/general/viewonce.js
-
     const commandName = rawCommand.toLowerCase();
 
     // ─────────────────────────────────────────────
@@ -219,7 +216,7 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
     const isBotOwner = owner.isOwner(sender, conn);
 
     // ─────────────────────────────────────────────
-    // MODE CHECK (private = silent ignore for non-owner)
+    // MODE CHECK
     // ─────────────────────────────────────────────
     const currentMode = mode.getMode(settings.mode || 'public');
     if (currentMode === 'private' && !isBotOwner) {
@@ -227,7 +224,7 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
     }
 
     // ─────────────────────────────────────────────
-    // RATE LIMIT (10 per minute per user)
+    // RATE LIMIT
     // ─────────────────────────────────────────────
     if (!isBotOwner && !rateLimit.isAllowed(sender, settings.rateLimitPerMinute || 10)) {
       return;
@@ -278,7 +275,16 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
 // ═══════════════════════════════════════════════════════
 async function handleGroupParticipantUpdate(conn, update) {
   try {
-    logger.info(`Group update: ${update.id}`);
+    logger.info(`Group update: ${update.id} (${update.action})`);
+
+    // Anti-Left watcher
+    try {
+      const { antiLeftWatcher } = require('./plugins/group/antileft');
+      await antiLeftWatcher(conn, update);
+    } catch (e) {
+      console.log('[ANTILEFT] Hook error:', e.message);
+    }
+
   } catch (error) {
     logger.error(`Group update error: ${error.message}`);
   }
