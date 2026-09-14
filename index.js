@@ -2,7 +2,7 @@
  * NEXORA MD - WhatsApp Bot
  * Simple MD-style owner detection (paired number = owner)
  * Auto-directory setup + channel branding + welcome message
- * Status react with statusJidList fix
+ * Status react with statusJidList fix (multi-source poster detection)
  */
 
 const express = require('express');
@@ -398,48 +398,84 @@ async function startNexora() {
             const autoView = global.autoStatusFlags?.seen !== undefined ? global.autoStatusFlags.seen : true;
             const autoReact = global.autoStatusFlags?.react !== undefined ? global.autoStatusFlags.react : true;
 
-            // AUTO VIEW
+            // ─── AUTO VIEW ───
             if (autoView) {
               try {
                 await Nexora.readMessages([mek.key]);
-                console.log('[STATUS] Viewed status from:', (mek.key.participant || mek.key.remoteJid).split('@')[0]);
+                console.log('[STATUS] Viewed from:', (mek.key.participant || mek.key.remoteJid).split('@')[0]);
               } catch (e) {
                 console.log('[STATUS] View failed:', e.message);
               }
             }
 
-            // AUTO REACT
+            // ─── AUTO REACT ───
             if (autoReact) {
               try {
-                const randomEmoji = REACTION_EMOJIS[Math.floor(Math.random() * REACTION_EMOJIS.length)];
-                const statusSender = mek.key.participant || mek.key.remoteJid;
+                // Log raw key for debugging
+                console.log('[STATUS] RAW KEY:', JSON.stringify(mek.key));
 
-                await Nexora.sendMessage(
-                  'status@broadcast',
-                  {
-                    react: {
-                      text: randomEmoji,
-                      key: mek.key
+                // Try every possible source for the poster JID
+                let statusSender =
+                  mek.key.participant ||
+                  mek.participant ||
+                  null;
+
+                // Try contextInfo from any message type
+                if (!statusSender && mek.message) {
+                  const msgKeys = Object.keys(mek.message || {});
+                  for (const k of msgKeys) {
+                    const inner = mek.message[k];
+                    if (inner && inner.contextInfo && inner.contextInfo.participant) {
+                      statusSender = inner.contextInfo.participant;
+                      break;
                     }
-                  },
-                  { statusJidList: [statusSender] }
-                );
+                  }
+                }
 
-                console.log('[STATUS] Reacted ' + randomEmoji + ' to status from: ' + statusSender.split('@')[0]);
+                if (!statusSender) {
+                  console.log('[STATUS] React skipped: no poster JID found');
+                } else {
+                  const randomEmoji = REACTION_EMOJIS[Math.floor(Math.random() * REACTION_EMOJIS.length)];
+                  console.log('[STATUS] Reacting', randomEmoji, 'to', statusSender);
+
+                  // Build JID list: poster + bot itself
+                  const jidList = [statusSender];
+                  if (Nexora.user && Nexora.user.id) {
+                    const botJid = Nexora.user.id.split(':')[0] + '@s.whatsapp.net';
+                    if (!jidList.includes(botJid)) jidList.push(botJid);
+                  }
+
+                  await Nexora.sendMessage(
+                    'status@broadcast',
+                    {
+                      react: {
+                        text: randomEmoji,
+                        key: mek.key
+                      }
+                    },
+                    { statusJidList: jidList }
+                  );
+
+                  console.log('[STATUS] Reacted', randomEmoji, 'to', statusSender.split('@')[0]);
+                }
               } catch (e) {
                 console.log('[STATUS] React failed:', e.message);
 
                 if (e.message && e.message.includes('rate-overlimit')) {
                   setTimeout(async () => {
                     try {
-                      const statusSender = mek.key.participant || mek.key.remoteJid;
+                      const retrySender = mek.key.participant;
+                      if (!retrySender) return;
                       const retryEmoji = REACTION_EMOJIS[Math.floor(Math.random() * REACTION_EMOJIS.length)];
                       await Nexora.sendMessage(
                         'status@broadcast',
                         { react: { text: retryEmoji, key: mek.key } },
-                        { statusJidList: [statusSender] }
+                        { statusJidList: [retrySender] }
                       );
-                    } catch (retryErr) {}
+                      console.log('[STATUS] Retry success');
+                    } catch (retryErr) {
+                      console.log('[STATUS] Retry failed:', retryErr.message);
+                    }
                   }, 2000);
                 }
               }
