@@ -1,6 +1,6 @@
 /**
  * NEXORA MD - Toggle Auto-React to Statuses
- * Usage: .statusreact on | .statusreact off
+ * Persists to data/status.json
  */
 
 const fs = require('fs');
@@ -9,11 +9,15 @@ const settings = require('../../settings');
 const dataPath = './data/status.json';
 
 if (!fs.existsSync('./data')) fs.mkdirSync('./data', { recursive: true });
-if (!fs.existsSync(dataPath)) fs.writeFileSync(dataPath, JSON.stringify({ view: true, react: true }));
 
 function readStore() {
-  try { return JSON.parse(fs.readFileSync(dataPath, 'utf8')); }
-  catch (e) { return { view: true, react: true }; }
+  try {
+    if (fs.existsSync(dataPath)) {
+      const data = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
+      return { view: data.view !== false, react: data.react !== false, emojis: data.emojis || [] };
+    }
+  } catch (e) {}
+  return { view: true, react: true, emojis: [] };
 }
 
 function writeStore(data) {
@@ -43,7 +47,7 @@ module.exports = {
       if (choice === 'on') {
         store.react = true;
         writeStore(store);
-        global.autoStatusFlags.react = true;
+        if (global.autoStatusFlags) global.autoStatusFlags.react = true;
 
         await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
         await conn.sendMessage(chatId, {
@@ -55,7 +59,7 @@ module.exports = {
       if (choice === 'off') {
         store.react = false;
         writeStore(store);
-        global.autoStatusFlags.react = false;
+        if (global.autoStatusFlags) global.autoStatusFlags.react = false;
 
         await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
         await conn.sendMessage(chatId, {
@@ -72,7 +76,8 @@ module.exports = {
           `Status: ${status}\n\n` +
           `Usage:\n` +
           `  ${settings.prefix || '.'}statusreact on\n` +
-          `  ${settings.prefix || '.'}statusreact off\n\n` +
+          `  ${settings.prefix || '.'}statusreact off\n` +
+          `  ${settings.prefix || '.'}sremoji 😀,❤️,🔥   - set emojis\n\n` +
           `${settings.footer}`
       });
     } catch (error) {
