@@ -2,6 +2,7 @@
  * NEXORA MD - WhatsApp Bot
  * Owner auto-detect + persistent mode + rate limit
  * Welcome message with image (axios buffer, no channel branding)
+ * Anti-delete state loaded from data/antidelete.json
  */
 
 const express = require('express');
@@ -57,7 +58,21 @@ global.commands = new Map();
 
 // Toggles from settings
 global.autoReadPM = false;
-global.antiDelete = settings.antiDelete;
+
+// ─────────────────────────────────────────────
+// ANTI-DELETE: load from data/antidelete.json
+// ─────────────────────────────────────────────
+try {
+  if (fs.existsSync('./data/antidelete.json')) {
+    const adData = JSON.parse(fs.readFileSync('./data/antidelete.json', 'utf8'));
+    global.antiDelete = adData.enabled !== false;
+  } else {
+    global.antiDelete = settings.antiDelete;
+  }
+} catch (e) {
+  global.antiDelete = settings.antiDelete;
+}
+
 global.autoTyping = {
   enabled: settings.autoTyping,
   dm: true,
