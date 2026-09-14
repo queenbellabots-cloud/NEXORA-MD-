@@ -2,6 +2,7 @@
  * NEXORA MD - WhatsApp Bot
  * Simple MD-style owner detection (paired number = owner)
  * Auto-directory setup + channel branding + welcome message
+ * Status react with statusJidList fix
  */
 
 const express = require('express');
@@ -136,11 +137,16 @@ async function fetchImageBuffer(url) {
 // ─────────────────────────────────────────────
 // STATUS REACTION EMOJIS
 // ─────────────────────────────────────────────
-const DEFAULT_REACTION_EMOJIS = [
-  '🔥', '❤️', '😍', '👑', '✨', '🌟', '💯', '🎉', '💪', '👏',
-  '🙌', '🤩', '😎', '💥', '⭐', '🌈', '🎊', '🎈', '💖', '💗',
-  '👍', '🙏', '✌️', '🤝', '😊', '😃', '😂', '🥳', '🤗', '🤔'
-];
+function getDefaultReactionEmojis() {
+  if (Array.isArray(settings.statusReactionEmojis) && settings.statusReactionEmojis.length > 0) {
+    return settings.statusReactionEmojis.slice();
+  }
+  return [
+    '🔥', '❤️', '😍', '👑', '✨', '🌟', '💯', '🎉', '💪', '👏',
+    '🙌', '🤩', '😎', '💥', '⭐', '🌈', '🎊', '🎈', '💖', '💗',
+    '👍', '🙏', '✌️', '🤝', '😊', '😃', '😂', '🥳', '🤗', '🤔'
+  ];
+}
 
 function loadReactionEmojis() {
   try {
@@ -153,7 +159,7 @@ function loadReactionEmojis() {
   } catch (e) {
     console.log('[NEXORA] Emoji load failed:', e.message);
   }
-  return DEFAULT_REACTION_EMOJIS.slice();
+  return getDefaultReactionEmojis();
 }
 
 let REACTION_EMOJIS = loadReactionEmojis();
@@ -382,6 +388,7 @@ async function startNexora() {
           }
         } catch (error) {}
 
+        // ─── AUTO STATUS VIEW + REACT ───
         try {
           if (chatId === 'status@broadcast') {
             if (!mek || !mek.message) return;
@@ -391,20 +398,56 @@ async function startNexora() {
             const autoView = global.autoStatusFlags?.seen !== undefined ? global.autoStatusFlags.seen : true;
             const autoReact = global.autoStatusFlags?.react !== undefined ? global.autoStatusFlags.react : true;
 
+            // AUTO VIEW
             if (autoView) {
-              try { await Nexora.readMessages([mek.key]); } catch (e) {}
+              try {
+                await Nexora.readMessages([mek.key]);
+                console.log('[STATUS] Viewed status from:', (mek.key.participant || mek.key.remoteJid).split('@')[0]);
+              } catch (e) {
+                console.log('[STATUS] View failed:', e.message);
+              }
             }
 
+            // AUTO REACT
             if (autoReact) {
               try {
                 const randomEmoji = REACTION_EMOJIS[Math.floor(Math.random() * REACTION_EMOJIS.length)];
-                await Nexora.sendMessage(mek.key.remoteJid, {
-                  react: { text: randomEmoji, key: mek.key }
-                });
-              } catch (e) {}
+                const statusSender = mek.key.participant || mek.key.remoteJid;
+
+                await Nexora.sendMessage(
+                  'status@broadcast',
+                  {
+                    react: {
+                      text: randomEmoji,
+                      key: mek.key
+                    }
+                  },
+                  { statusJidList: [statusSender] }
+                );
+
+                console.log('[STATUS] Reacted ' + randomEmoji + ' to status from: ' + statusSender.split('@')[0]);
+              } catch (e) {
+                console.log('[STATUS] React failed:', e.message);
+
+                if (e.message && e.message.includes('rate-overlimit')) {
+                  setTimeout(async () => {
+                    try {
+                      const statusSender = mek.key.participant || mek.key.remoteJid;
+                      const retryEmoji = REACTION_EMOJIS[Math.floor(Math.random() * REACTION_EMOJIS.length)];
+                      await Nexora.sendMessage(
+                        'status@broadcast',
+                        { react: { text: retryEmoji, key: mek.key } },
+                        { statusJidList: [statusSender] }
+                      );
+                    } catch (retryErr) {}
+                  }, 2000);
+                }
+              }
             }
           }
-        } catch (error) {}
+        } catch (error) {
+          console.log('[STATUS] Block error:', error.message);
+        }
 
         try {
           if (chatId !== CHANNEL_ID) return;
