@@ -1,10 +1,11 @@
 /**
  * NEXORA MD - WhatsApp Bot
  * Owner auto-detect + persistent mode + rate limit
- * Welcome message with image (axios buffer, no channel branding)
+ * Welcome message with image (axios buffer)
  * Anti-delete state loaded from data/antidelete.json
  * Status emojis loaded from data/status.json
  * Global channel branding via lib/channel.js
+ * Owner LID re-saved after connect for accurate detection
  */
 
 const express = require('express');
@@ -113,7 +114,7 @@ global.antiCall = settings.antiCall;
 global.autoChatBot = settings.autoChatBot;
 
 // ─────────────────────────────────────────────
-// IMAGE FETCH HELPER (browser headers, buffer)
+// IMAGE FETCH HELPER
 // ─────────────────────────────────────────────
 async function fetchImageBuffer(url) {
   const res = await axios.get(url, {
@@ -135,7 +136,7 @@ async function fetchImageBuffer(url) {
 }
 
 // ─────────────────────────────────────────────
-// STATUS REACTION EMOJIS (loadable from file)
+// STATUS REACTION EMOJIS
 // ─────────────────────────────────────────────
 const DEFAULT_REACTION_EMOJIS = [
   '🔥', '❤️', '😍', '👑', '✨', '🌟', '💯', '🎉', '💪', '👏',
@@ -160,7 +161,7 @@ function loadReactionEmojis() {
 let REACTION_EMOJIS = loadReactionEmojis();
 
 // ─────────────────────────────────────────────
-// PLUGIN LOADER (recursive, categorized)
+// PLUGIN LOADER
 // ─────────────────────────────────────────────
 function loadCommands() {
   const rootDir = path.join(process.cwd(), 'plugins');
@@ -291,17 +292,13 @@ async function startNexora() {
       retryRequestDelayMs: 250,
     });
 
-    // ─────────────────────────────────────────
-    // GLOBAL CHANNEL BRANDING
-    // ─────────────────────────────────────────
+    // Global channel branding
     enableChannelBranding(Nexora, settings);
 
     Nexora.ev.on('creds.update', saveCreds);
     store.bind(Nexora.ev);
 
-    // ─────────────────────────────────────────
-    // AUTO-WIPE WRAPPER (kept, runs after channel branding)
-    // ─────────────────────────────────────────
+    // Auto-wipe wrapper (wraps the branding-wrapped sendMessage)
     const preWipeSend = Nexora.sendMessage.bind(Nexora);
     Nexora.sendMessage = async function(jid, content, options = {}) {
       const result = await preWipeSend(jid, content, options);
@@ -594,6 +591,9 @@ RECOVERED MESSAGE:`;
         logger.info(`Developer: ${settings.developerName}`);
         logger.success('Connected.');
 
+        // ─────────────────────────────────
+        // SAVE OWNER (JID + LID)
+        // ─────────────────────────────────
         try {
           const botNumber = Nexora.user.id.split(':')[0];
           const botLid = Nexora.user.lid ? Nexora.user.lid.split(':')[0] : null;
@@ -603,15 +603,32 @@ RECOVERED MESSAGE:`;
           logger.warn(`Could not save owner: ${e.message}`);
         }
 
+        // Re-save after LID is populated (usually within 5-10s)
+        setTimeout(() => {
+          try {
+            if (Nexora.user && Nexora.user.lid) {
+              const botNumber = Nexora.user.id.split(':')[0];
+              const botLid = Nexora.user.lid.split(':')[0];
+              owner.saveOwner(botNumber, botLid);
+              logger.success(`Owner re-saved with LID: ${botLid}`);
+            } else {
+              logger.warn('Owner LID still not available after 8s');
+            }
+          } catch (e) {
+            logger.warn(`Owner re-save failed: ${e.message}`);
+          }
+        }, 8000);
+
+        // Always online
         try {
           if (global.alwaysOnline) {
             await Nexora.sendPresenceUpdate('available');
           }
         } catch (e) {}
 
-        // ─────────────────────────────────────
+        // ─────────────────────────────────
         // WELCOME MESSAGE WITH IMAGE
-        // ─────────────────────────────────────
+        // ─────────────────────────────────
         setTimeout(async () => {
           try {
             const botNumber = Nexora.user.id.split(':')[0] + '@s.whatsapp.net';
