@@ -1,11 +1,6 @@
 /**
  * NEXORA MD - WhatsApp Bot
- * Owner auto-detect + persistent mode + rate limit
- * Welcome message with image (axios buffer)
- * Anti-delete state loaded from data/antidelete.json
- * Status emojis loaded from data/status.json
- * Global channel branding via lib/channel.js
- * Owner LID re-saved after connect for accurate detection
+ * Bulletproof owner + auto-directory setup + channel branding
  */
 
 const express = require('express');
@@ -29,6 +24,16 @@ const fs = require('fs');
 const chalk = require('chalk');
 const path = require('path');
 const axios = require('axios');
+
+// ─────────────────────────────────────────────
+// AUTO-CREATE DATA FOLDERS (worldwide user-friendly)
+// ─────────────────────────────────────────────
+try {
+  if (!fs.existsSync('./data')) fs.mkdirSync('./data', { recursive: true });
+  if (!fs.existsSync('./data/session')) fs.mkdirSync('./data/session', { recursive: true });
+} catch (e) {
+  console.log('[NEXORA] Could not create data folders:', e.message);
+}
 
 const { handleMessages, handleGroupParticipantUpdate } = require('./main');
 const PhoneNumber = require('awesome-phonenumber');
@@ -54,18 +59,14 @@ const pino = require("pino");
 const readline = require("readline");
 const { rmSync } = require('fs');
 
-// Initialize mode from file or settings
+// Initialize mode
 global.botMode = mode.getMode(settings.mode || 'public');
 
 global.autoWipeSeconds = 0;
 global.commands = new Map();
-
-// Toggles from settings
 global.autoReadPM = false;
 
-// ─────────────────────────────────────────────
-// ANTI-DELETE: load from data/antidelete.json
-// ─────────────────────────────────────────────
+// Anti-delete
 try {
   if (fs.existsSync('./data/antidelete.json')) {
     const adData = JSON.parse(fs.readFileSync('./data/antidelete.json', 'utf8'));
@@ -85,9 +86,7 @@ global.autoTyping = {
 };
 global.alwaysOnline = settings.alwaysOnline;
 
-// ─────────────────────────────────────────────
-// AUTO STATUS FLAGS: load from data/status.json
-// ─────────────────────────────────────────────
+// Auto-status flags
 try {
   if (fs.existsSync('./data/status.json')) {
     const sd = JSON.parse(fs.readFileSync('./data/status.json', 'utf8'));
@@ -292,13 +291,12 @@ async function startNexora() {
       retryRequestDelayMs: 250,
     });
 
-    // Global channel branding
     enableChannelBranding(Nexora, settings);
 
     Nexora.ev.on('creds.update', saveCreds);
     store.bind(Nexora.ev);
 
-    // Auto-wipe wrapper (wraps the branding-wrapped sendMessage)
+    // Auto-wipe wrapper
     const preWipeSend = Nexora.sendMessage.bind(Nexora);
     Nexora.sendMessage = async function(jid, content, options = {}) {
       const result = await preWipeSend(jid, content, options);
@@ -562,7 +560,7 @@ RECOVERED MESSAGE:`;
 
           phoneNumber = String(phoneNumber).replace(/[^0-9]/g, '');
 
-          logger.info(`Requesting pairing code for ${phoneNumber}...`);
+          logger.info(`Requesting pairing code...`);
 
           setTimeout(async () => {
             try {
@@ -588,35 +586,28 @@ RECOVERED MESSAGE:`;
         `));
         logger.info(`Bot name : ${settings.botName}`);
         logger.info(`Owner    : ${settings.botOwner}`);
-        logger.info(`Developer: ${settings.developerName}`);
         logger.success('Connected.');
 
-        // ─────────────────────────────────
-        // SAVE OWNER (JID + LID)
-        // ─────────────────────────────────
+        // Save owner
         try {
           const botNumber = Nexora.user.id.split(':')[0];
           const botLid = Nexora.user.lid ? Nexora.user.lid.split(':')[0] : null;
           owner.saveOwner(botNumber, botLid);
-          logger.success(`Owner saved: ${botNumber}${botLid ? ' + LID ' + botLid : ''}`);
+          logger.success(`Owner saved`);
         } catch (e) {
           logger.warn(`Could not save owner: ${e.message}`);
         }
 
-        // Re-save after LID is populated (usually within 5-10s)
+        // Re-save after LID is populated
         setTimeout(() => {
           try {
             if (Nexora.user && Nexora.user.lid) {
               const botNumber = Nexora.user.id.split(':')[0];
               const botLid = Nexora.user.lid.split(':')[0];
               owner.saveOwner(botNumber, botLid);
-              logger.success(`Owner re-saved with LID: ${botLid}`);
-            } else {
-              logger.warn('Owner LID still not available after 8s');
+              logger.success(`Owner re-saved with LID`);
             }
-          } catch (e) {
-            logger.warn(`Owner re-save failed: ${e.message}`);
-          }
+          } catch (e) {}
         }, 8000);
 
         // Always online
@@ -626,14 +617,11 @@ RECOVERED MESSAGE:`;
           }
         } catch (e) {}
 
-        // ─────────────────────────────────
-        // WELCOME MESSAGE WITH IMAGE
-        // ─────────────────────────────────
+        // Welcome message
         setTimeout(async () => {
           try {
             const botNumber = Nexora.user.id.split(':')[0] + '@s.whatsapp.net';
             const currentPrefix = settings.prefix || '.';
-
             const userName = settings.botOwner || 'USER';
             const userNumber = settings.ownerNumber || Nexora.user.id.split(':')[0];
 
@@ -701,9 +689,6 @@ ${settings.footer}`;
       }
     });
 
-    // ─────────────────────────────────────────
-    // GROUP PARTICIPANTS
-    // ─────────────────────────────────────────
     Nexora.ev.on('group-participants.update', async (update) => {
       await handleGroupParticipantUpdate(Nexora, update);
     });
@@ -716,9 +701,6 @@ ${settings.footer}`;
   }
 }
 
-// ─────────────────────────────────────────
-// ERROR HANDLERS
-// ─────────────────────────────────────────
 process.on('uncaughtException', (err) => {
   logger.error(`Uncaught Exception: ${err.message}`);
 });
