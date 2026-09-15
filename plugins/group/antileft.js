@@ -1,11 +1,12 @@
 /**
  * NEXORA MD - Anti-Left Protection
  * Re-adds any member who tries to leave the group
- * Handles JID and LID admin matching
+ * Uses shared admin helpers (JID + LID safe)
  */
 
 const fs = require('fs');
 const settings = require('../../settings');
+const { isBotAdmin, idsMatch, cleanNum, extractLidPart } = require('../../lib/groupAdmin');
 
 const dataPath = './data/antileft.json';
 
@@ -13,105 +14,21 @@ if (!fs.existsSync('./data')) fs.mkdirSync('./data', { recursive: true });
 if (!fs.existsSync(dataPath)) fs.writeFileSync(dataPath, JSON.stringify({}));
 
 function readStore() {
-  try {
-    return JSON.parse(fs.readFileSync(dataPath, 'utf8'));
-  } catch (e) {
-    return {};
-  }
+  try { return JSON.parse(fs.readFileSync(dataPath, 'utf8')); }
+  catch (e) { return {}; }
 }
 
 function writeStore(data) {
-  try {
-    fs.writeFileSync(dataPath, JSON.stringify(data, null, 2));
-  } catch (e) {
-    console.log('[ANTILEFT] Write failed:', e.message);
-  }
-}
-
-// ─────────────────────────────────────────────
-// ID HELPERS (handle JID + LID)
-// ─────────────────────────────────────────────
-function extractNumber(id) {
-  if (!id) return '';
-  return String(id).split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-}
-
-function extractLidPart(id) {
-  if (!id) return '';
-  return String(id).split('@')[0];
-}
-
-function idsMatch(a, b) {
-  if (!a || !b) return false;
-  if (a === b) return true;
-
-  const aNum = extractNumber(a);
-  const bNum = extractNumber(b);
-  const aLid = extractLidPart(a);
-  const bLid = extractLidPart(b);
-
-  return (
-    (aNum && bNum && aNum === bNum) ||
-    (aLid && bLid && aLid === bLid) ||
-    (aNum && bLid && aNum === bLid) ||
-    (aLid && bNum && aLid === bNum)
-  );
-}
-
-function getBotIds(conn) {
-  const ids = new Set();
-  if (!conn || !conn.user) return ids;
-
-  if (conn.user.id) {
-    ids.add(conn.user.id);
-    ids.add(conn.user.id.split(':')[0] + '@s.whatsapp.net');
-    ids.add(conn.user.id.split(':')[0] + '@lid');
-  }
-  if (conn.user.lid) {
-    ids.add(conn.user.lid);
-    ids.add(conn.user.lid.split(':')[0] + '@lid');
-    ids.add(conn.user.lid.split(':')[0] + '@s.whatsapp.net');
-  }
-  return ids;
-}
-
-function isBotParticipant(participant, botIds) {
-  for (const id of botIds) {
-    if (idsMatch(participant.id, id)) return true;
-    if (participant.lid && idsMatch(participant.lid, id)) return true;
-  }
-  return false;
-}
-
-// ─────────────────────────────────────────────
-// ADMIN CHECKS
-// ─────────────────────────────────────────────
-async function isBotAdmin(conn, groupId) {
-  try {
-    const meta = await conn.groupMetadata(groupId);
-    const botIds = getBotIds(conn);
-
-    const me = meta.participants.find(p => isBotParticipant(p, botIds));
-    if (!me) {
-      console.log('[ANTILEFT] Bot not found in participant list');
-      return false;
-    }
-
-    return me.admin === 'admin' || me.admin === 'superadmin';
-  } catch (e) {
-    console.log('[ANTILEFT] isBotAdmin error:', e.message);
-    return false;
-  }
+  try { fs.writeFileSync(dataPath, JSON.stringify(data, null, 2)); }
+  catch (e) { console.log('[ANTILEFT] Write failed:', e.message); }
 }
 
 async function isSenderAdmin(conn, groupId, senderJid) {
   try {
     const meta = await conn.groupMetadata(groupId);
-    const me = meta.participants.find(p => {
-      if (idsMatch(p.id, senderJid)) return true;
-      if (p.lid && idsMatch(p.lid, senderJid)) return true;
-      return false;
-    });
+    const me = meta.participants.find(p =>
+      idsMatch(p.id, senderJid) || (p.lid && idsMatch(p.lid, senderJid))
+    );
     if (!me) return false;
     return me.admin === 'admin' || me.admin === 'superadmin';
   } catch (e) {
@@ -119,9 +36,6 @@ async function isSenderAdmin(conn, groupId, senderJid) {
   }
 }
 
-// ─────────────────────────────────────────────
-// COMMAND
-// ─────────────────────────────────────────────
 module.exports = {
   name: 'antileft',
   aliases: ['al', 'antiexit'],
@@ -206,9 +120,7 @@ module.exports = {
 
     } catch (error) {
       console.log('[ANTILEFT] Command error:', error.message);
-      try {
-        await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
-      } catch (e) {}
+      try { await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } }); } catch (e) {}
       try {
         await conn.sendMessage(chatId, {
           text: `Error: ${error.message}\n\n${settings.footer}`
@@ -245,12 +157,18 @@ async function antiLeftWatcher(conn, update) {
       return;
     }
 
-    // Build set of admin JIDs
-    const adminIds = meta.participants
-      .filter(p => p.admin === 'admin' || p.admin === 'superadmin')
-      .map(p => p.id);
+    // Build list of admin IDs (JID + LID)
+    const adminIds = [];
+    for (const p of meta.participants) {
+      if (p.admin === 'admin' || p.admin === 'superadmin') {
+        adminIds.push(p.id);
+        if (p.lid) adminIds.push(p.lid);
+      }
+    }
 
-    const botIds = getBotIds(conn);
+    // Bot's own IDs
+    const botJid = conn.user.id.split(':')[0] + '@s.whatsapp.net';
+    const botLid = conn.user.lid ? extractLidPart(conn.user.lid) : '';
 
     const toReAdd = [];
 
@@ -262,11 +180,8 @@ async function antiLeftWatcher(conn, update) {
       if (adminIds.some(a => idsMatch(a, jid))) continue;
 
       // Skip the bot itself
-      let isBot = false;
-      for (const id of botIds) {
-        if (idsMatch(id, jid)) { isBot = true; break; }
-      }
-      if (isBot) continue;
+      if (idsMatch(botJid, jid)) continue;
+      if (botLid && idsMatch(botLid, jid)) continue;
 
       toReAdd.push(jid);
     }
@@ -282,7 +197,7 @@ async function antiLeftWatcher(conn, update) {
     }
 
     try {
-      const names = toReAdd.map(j => '@' + extractNumber(j)).join(', ');
+      const names = toReAdd.map(j => '@' + cleanNum(j)).join(', ');
       await conn.sendMessage(groupId, {
         text:
           `ANTI-LEFT\n\n` +
