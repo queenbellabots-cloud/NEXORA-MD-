@@ -9,22 +9,46 @@ if (!fs.existsSync(dataPath)) fs.writeFileSync(dataPath, '{}');
 function readStore() { try { return JSON.parse(fs.readFileSync(dataPath, 'utf8')); } catch (e) { return {}; } }
 function writeStore(data) { try { fs.writeFileSync(dataPath, JSON.stringify(data, null, 2)); } catch (e) {} }
 
+// ─────────────────────────────────────────────
+// LINK DETECTION — broad
+// ─────────────────────────────────────────────
 function detectLink(text) {
   if (!text) return false;
-  return [
+
+  const patterns = [
+    // WhatsApp group / channel / direct
     /chat\.whatsapp\.com\/[A-Za-z0-9]{10,}/i,
     /whatsapp\.com\/channel\/[A-Za-z0-9]{10,}/i,
     /wa\.me\/[0-9]+/i,
+    /api\.whatsapp\.com\/send/i,
+
+    // Telegram
     /t\.me\/[A-Za-z0-9_]+/i,
-    /telegram\.me\/[A-Za-z0-9_]+/i
-  ].some(re => re.test(text));
+    /telegram\.me\/[A-Za-z0-9_]+/i,
+    /telegram\.dog\/[A-Za-z0-9_]+/i,
+
+    // Generic URLs — any http/https
+    /https?:\/\/[^\s]+/i,
+
+    // Shortened links
+    /bit\.ly\/[A-Za-z0-9]+/i,
+    /tinyurl\.com\/[A-Za-z0-9]+/i,
+    /goo\.gl\/[A-Za-z0-9]+/i,
+    /cutt\.ly\/[A-Za-z0-9]+/i,
+    /shorturl\.at\/[A-Za-z0-9]+/i,
+
+    // Bare domains (no protocol)
+    /(?:^|[\s(])(?:[a-z0-9-]+\.)+(?:com|net|org|io|dev|xyz|info|co|ke|app|me|link|site|online|tech|bot)(?:[/\s)]|$)/i
+  ];
+
+  return patterns.some(re => re.test(text));
 }
 
 module.exports = {
   name: 'antilink',
   aliases: ['al', 'nolink'],
   category: 'group',
-  description: 'Delete group invite links',
+  description: 'Delete links posted in the group',
   usage: '.antilink on [delete|warn|kick] | .antilink off',
   groupOnly: true,
   react: '✅',
@@ -61,7 +85,15 @@ module.exports = {
         writeStore(store);
         await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
         await conn.sendMessage(chatId, {
-          text: `Anti-link ENABLED\nAction: ${action.toUpperCase()}\n\n${settings.footer}`
+          text:
+            `Anti-link ENABLED\n` +
+            `Action: ${action.toUpperCase()}\n\n` +
+            `Detects:\n` +
+            `- WhatsApp invites\n` +
+            `- Telegram links\n` +
+            `- Any http/https URL\n` +
+            `- Bare domains (.com, .net, etc)\n\n` +
+            `${settings.footer}`
         });
         return;
       }
@@ -114,19 +146,28 @@ async function antiLinkWatcher(conn, mek, chatId) {
     else if (msg.videoMessage) text = msg.videoMessage.caption || '';
     else if (msg.documentMessage) text = msg.documentMessage.caption || '';
 
-    if (!text || !detectLink(text)) return;
+    if (!text) return;
+
+    // Debug log — helps verify detection
+    if (detectLink(text)) {
+      console.log('[ANTILINK] Detected link in:', text.slice(0, 60));
+    }
+
+    if (!detectLink(text)) return;
 
     try {
       await conn.sendMessage(chatId, { delete: mek.key });
       console.log('[ANTILINK] Deleted link from', cleanNum(sender));
-    } catch (e) {}
+    } catch (e) {
+      console.log('[ANTILINK] Delete failed:', e.message);
+    }
 
     const action = cfg.action || 'delete';
 
     if (action === 'warn') {
       try {
         await conn.sendMessage(chatId, {
-          text: `@${cleanNum(sender)}, group invite links are not allowed.\n\n${settings.footer}`,
+          text: `@${cleanNum(sender)}, links are not allowed here.\n\n${settings.footer}`,
           mentions: [sender]
         });
       } catch (e) {}
@@ -136,7 +177,7 @@ async function antiLinkWatcher(conn, mek, chatId) {
       try {
         await conn.groupParticipantsUpdate(chatId, [sender], 'remove');
         await conn.sendMessage(chatId, {
-          text: `@${cleanNum(sender)} was removed for posting an invite link.\n\n${settings.footer}`,
+          text: `@${cleanNum(sender)} was removed for posting a link.\n\n${settings.footer}`,
           mentions: [sender]
         });
       } catch (e) {}
