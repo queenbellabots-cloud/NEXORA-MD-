@@ -1,7 +1,7 @@
 /**
  * NEXORA MD - Anti-Left Protection
  * Re-adds any member who tries to leave the group
- * Uses shared admin helpers (JID + LID safe)
+ * Tries both JID and LID formats on re-add
  */
 
 const fs = require('fs');
@@ -36,6 +36,9 @@ async function isSenderAdmin(conn, groupId, senderJid) {
   }
 }
 
+// ─────────────────────────────────────────────
+// COMMAND
+// ─────────────────────────────────────────────
 module.exports = {
   name: 'antileft',
   aliases: ['al', 'antiexit'],
@@ -137,11 +140,23 @@ async function antiLeftWatcher(conn, update) {
   try {
     const { id: groupId, participants, action } = update;
 
-    if (!groupId || !groupId.endsWith('@g.us')) return;
-    if (action !== 'remove') return;
+    console.log('[ANTILEFT] Watcher fired:', action, '| group:', groupId, '| participants:', JSON.stringify(participants));
+
+    if (!groupId || !groupId.endsWith('@g.us')) {
+      console.log('[ANTILEFT] Skipped: not a group');
+      return;
+    }
+    if (action !== 'remove') {
+      console.log('[ANTILEFT] Skipped: action is', action);
+      return;
+    }
 
     const store = readStore();
-    if (!store[groupId] || !store[groupId].enabled) return;
+    console.log('[ANTILEFT] Store check:', JSON.stringify(store[groupId]));
+    if (!store[groupId] || !store[groupId].enabled) {
+      console.log('[ANTILEFT] Skipped: not enabled for this group');
+      return;
+    }
 
     const botIsAdmin = await isBotAdmin(conn, groupId);
     if (!botIsAdmin) {
@@ -186,25 +201,92 @@ async function antiLeftWatcher(conn, update) {
       toReAdd.push(jid);
     }
 
-    if (toReAdd.length === 0) return;
-
-    try {
-      await conn.groupParticipantsUpdate(groupId, toReAdd, 'add');
-      console.log('[ANTILEFT] Re-added:', toReAdd.join(', '));
-    } catch (e) {
-      console.log('[ANTILEFT] Re-add failed:', e.message);
+    if (toReAdd.length === 0) {
+      console.log('[ANTILEFT] No members to re-add (all admins or bot)');
       return;
     }
 
+    // ─────────────────────────────────────────
+    // ATTEMPT 1 — original format
+    // ─────────────────────────────────────────
+    let added = false;
+    try {
+      await conn.groupParticipantsUpdate(groupId, toReAdd, 'add');
+      console.log('[ANTILEFT] Re-added (original format):', toReAdd.join(', '));
+      added = true;
+    } catch (e) {
+      console.log('[ANTILEFT] Add failed with original format:', e.message);
+    }
+
+    // ─────────────────────────────────────────
+    // ATTEMPT 2 — alternate format
+    // ─────────────────────────────────────────
+    if (!added) {
+      const altIds = [];
+      for (const jid of toReAdd) {
+        const num = String(jid).split('@')[0].split(':')[0];
+        if (String(jid).includes('@lid')) {
+          altIds.push(num + '@s.whatsapp.net');
+        } else {
+          altIds.push(num + '@lid');
+        }
+      }
+
+      try {
+        await conn.groupParticipantsUpdate(groupId, altIds, 'add');
+        console.log('[ANTILEFT] Re-added (alt format):', altIds.join(', '));
+        added = true;
+      } catch (e) {
+        console.log('[ANTILEFT] Add failed with alt format:', e.message);
+      }
+    }
+
+    // ─────────────────────────────────────────
+    // ATTEMPT 3 — combined
+    // ─────────────────────────────────────────
+    if (!added) {
+      const combined = [...toReAdd];
+      for (const jid of toReAdd) {
+        const num = String(jid).split('@')[0].split(':')[0];
+        if (String(jid).includes('@lid')) {
+          combined.push(num + '@s.whatsapp.net');
+        } else {
+          combined.push(num + '@lid');
+        }
+      }
+
+      try {
+        await conn.groupParticipantsUpdate(groupId, combined, 'add');
+        console.log('[ANTILEFT] Re-added (combined):', combined.join(', '));
+        added = true;
+      } catch (e) {
+        console.log('[ANTILEFT] All add attempts failed:', e.message);
+      }
+    }
+
+    // ─────────────────────────────────────────
+    // Notify in group
+    // ─────────────────────────────────────────
     try {
       const names = toReAdd.map(j => '@' + cleanNum(j)).join(', ');
-      await conn.sendMessage(groupId, {
-        text:
-          `ANTI-LEFT\n\n` +
-          `${names} tried to leave and was re-added.\n\n` +
-          `${settings.footer}`,
-        mentions: toReAdd
-      });
+      if (added) {
+        await conn.sendMessage(groupId, {
+          text:
+            `ANTI-LEFT\n\n` +
+            `${names} tried to leave and was re-added.\n\n` +
+            `${settings.footer}`,
+          mentions: toReAdd
+        });
+      } else {
+        await conn.sendMessage(groupId, {
+          text:
+            `ANTI-LEFT\n\n` +
+            `Could not re-add ${names}.\n` +
+            `Their privacy settings may block group adds.\n\n` +
+            `${settings.footer}`,
+          mentions: toReAdd
+        });
+      }
     } catch (e) {}
 
   } catch (error) {
