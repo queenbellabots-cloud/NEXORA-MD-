@@ -1,5 +1,6 @@
 const fs = require('fs');
 const settings = require('../../settings');
+const { isSenderAdmin, isBotAdmin, cleanNum } = require('../../lib/groupAdmin');
 
 const dataPath = './data/antibad.json';
 if (!fs.existsSync('./data')) fs.mkdirSync('./data', { recursive: true });
@@ -7,31 +8,13 @@ if (!fs.existsSync(dataPath)) fs.writeFileSync(dataPath, '{}');
 
 function readStore() { try { return JSON.parse(fs.readFileSync(dataPath, 'utf8')); } catch (e) { return {}; } }
 function writeStore(d) { try { fs.writeFileSync(dataPath, JSON.stringify(d, null, 2)); } catch (e) {} }
-function cleanNum(s) { return String(s || '').split('@')[0].split(':')[0].replace(/[^0-9]/g, ''); }
 
 const BAD_WORDS = [
   'fuck', 'fck', 'fuk', 'shit', 'bitch', 'bastard',
   'asshole', 'dick', 'pussy', 'cunt', 'whore', 'slut',
   'malaya', 'kuma', 'mkundu', 'shenzi', 'mjinga',
-  'sex', 'porn', 'nude', 'xxx', 'umbwa', 'useless', 'takataka', 'nitakudinya', 'nitakupiga', 'matako'
+  'sex', 'porn', 'nude', 'xxx'
 ];
-
-async function isSenderAdmin(conn, groupId, jid) {
-  try {
-    const meta = await conn.groupMetadata(groupId);
-    const me = meta.participants.find(p => cleanNum(p.id) === cleanNum(jid));
-    return me && (me.admin === 'admin' || me.admin === 'superadmin');
-  } catch (e) { return false; }
-}
-
-async function isBotAdmin(conn, groupId) {
-  try {
-    const meta = await conn.groupMetadata(groupId);
-    const botJid = conn.user.id.split(':')[0] + '@s.whatsapp.net';
-    const me = meta.participants.find(p => cleanNum(p.id) === cleanNum(botJid));
-    return me && (me.admin === 'admin' || me.admin === 'superadmin');
-  } catch (e) { return false; }
-}
 
 function hasBadWord(text) {
   if (!text) return false;
