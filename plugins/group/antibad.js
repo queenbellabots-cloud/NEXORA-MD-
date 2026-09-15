@@ -13,7 +13,7 @@ const BAD_WORDS = [
   'fuck', 'fck', 'fuk', 'shit', 'bitch', 'bastard',
   'asshole', 'dick', 'pussy', 'cunt', 'whore', 'slut',
   'malaya', 'kuma', 'mkundu', 'shenzi', 'mjinga',
-  'sex', 'porn', 'nude', 'xxx', 'umbwa', 'useless', 'takataka', nitakudinya', 'nitakupiga', 'matako'
+  'sex', 'porn', 'nude', 'xxx', 'umbwa', 'useless', 'takataka', 'nitakudinya', 'nitakupiga', 'matako'
 ];
 
 async function isSenderAdmin(conn, groupId, jid) {
