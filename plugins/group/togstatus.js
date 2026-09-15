@@ -1,18 +1,9 @@
-/**
- * NEXORA MD - Group Status (Group Story)
- * Posts a native WhatsApp group story visible only to group members
- * Reply to image/video/sticker, or pass text
- * No ffmpeg dependency
- */
-
 const settings = require('../../settings');
 const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
+const { isSenderAdmin, isBotAdmin, cleanNum } = require('../../lib/groupAdmin');
 
 const PURPLE_BG = '#9C27B0';
 
-// ─────────────────────────────────────────────
-// HELPERS
-// ─────────────────────────────────────────────
 function detectMediaType(message) {
   if (!message || typeof message !== 'object') return null;
   if (message.imageMessage) return 'image';
@@ -45,36 +36,6 @@ async function downloadMedia(message, type) {
   return Buffer.concat(chunks);
 }
 
-function cleanNum(s) {
-  return String(s || '').split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
-}
-
-async function isSenderAdmin(conn, groupId, senderJid) {
-  try {
-    const meta = await conn.groupMetadata(groupId);
-    const me = meta.participants.find(p => cleanNum(p.id) === cleanNum(senderJid));
-    if (!me) return false;
-    return me.admin === 'admin' || me.admin === 'superadmin';
-  } catch (e) {
-    return false;
-  }
-}
-
-async function isBotAdmin(conn, groupId) {
-  try {
-    const meta = await conn.groupMetadata(groupId);
-    const botJid = conn.user.id.split(':')[0] + '@s.whatsapp.net';
-    const me = meta.participants.find(p => cleanNum(p.id) === cleanNum(botJid));
-    if (!me) return false;
-    return me.admin === 'admin' || me.admin === 'superadmin';
-  } catch (e) {
-    return false;
-  }
-}
-
-// ─────────────────────────────────────────────
-// GROUP STATUS POSTER
-// ─────────────────────────────────────────────
 async function postGroupStatus(conn, jid, content) {
   const statusSourceType = content.text
     ? 'TEXT'
@@ -100,9 +61,6 @@ async function postGroupStatus(conn, jid, content) {
   });
 }
 
-// ─────────────────────────────────────────────
-// COMMAND
-// ─────────────────────────────────────────────
 module.exports = {
   name: 'groupstatus',
   aliases: ['gcstatus', 'gstatus', 'togcstatus', 'statusgc'],
@@ -123,7 +81,6 @@ module.exports = {
         return;
       }
 
-      // Permissions
       const sender = mek.key.participant || mek.key.remoteJid;
       const senderIsAdmin = await isSenderAdmin(conn, chatId, sender);
       if (!senderIsAdmin && !isOwner) {
@@ -143,9 +100,6 @@ module.exports = {
         return;
       }
 
-      // ─────────────────────────────────────────
-      // READ QUOTED MEDIA OR TEXT
-      // ─────────────────────────────────────────
       const caption = args.join(' ').trim();
 
       const contextInfo =
@@ -156,9 +110,7 @@ module.exports = {
 
       const quotedMessage = contextInfo?.quotedMessage;
 
-      // ─────────────────────────────────────────
-      // TEXT-ONLY STATUS
-      // ─────────────────────────────────────────
+      // TEXT status
       if (!quotedMessage) {
         if (!caption) {
           await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
@@ -175,9 +127,7 @@ module.exports = {
         }
 
         await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
-        await conn.sendMessage(chatId, {
-          text: `Posting text group status...`
-        });
+        await conn.sendMessage(chatId, { text: `Posting text group status...` });
 
         try {
           await postGroupStatus(conn, chatId, {
@@ -196,9 +146,7 @@ module.exports = {
         return;
       }
 
-      // ─────────────────────────────────────────
-      // MEDIA STATUS
-      // ─────────────────────────────────────────
+      // MEDIA status
       const mediaPayload = unwrapQuotedMessage(quotedMessage);
       const mediaType = detectMediaType(mediaPayload);
       if (!mediaType) {
@@ -210,9 +158,7 @@ module.exports = {
       }
 
       await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
-      await conn.sendMessage(chatId, {
-        text: `Preparing ${mediaType} group status...`
-      });
+      await conn.sendMessage(chatId, { text: `Preparing ${mediaType} group status...` });
 
       let buffer = null;
       try {
@@ -250,9 +196,7 @@ module.exports = {
 
     } catch (error) {
       console.log('[GROUPSTATUS] Error:', error.message);
-      try {
-        await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
-      } catch (e) {}
+      try { await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } }); } catch (e) {}
       try {
         await conn.sendMessage(chatId, {
           text: `Error: ${error.message}\n\n${settings.footer}`
