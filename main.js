@@ -2,6 +2,7 @@
  * NEXORA MD - Main Handlers
  * Simple MD-style owner check (paired number = owner)
  * Public/private mode + rate limit
+ * Anti-link and anti-bad watchers integrated
  */
 
 const settings = require('./settings');
@@ -170,6 +171,27 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
     else if (mek.message.videoMessage) text = mek.message.videoMessage.caption || '';
 
     try { await handleAutoChatBot(conn, mek); } catch (e) {}
+
+    // ─────────────────────────────────────────
+    // GROUP WATCHERS (anti-link, anti-bad)
+    // ─────────────────────────────────────────
+    if (chatId.endsWith('@g.us')) {
+      // Anti-link
+      try {
+        const { antiLinkWatcher } = require('./plugins/group/antilink');
+        await antiLinkWatcher(conn, mek, chatId);
+      } catch (e) {
+        console.log('[ANTILINK] Hook error:', e.message);
+      }
+
+      // Anti-bad
+      try {
+        const { antiBadWatcher } = require('./plugins/group/antibad');
+        await antiBadWatcher(conn, mek, chatId);
+      } catch (e) {
+        console.log('[ANTIBAD] Hook error:', e.message);
+      }
+    }
 
     if (!text) return;
 
