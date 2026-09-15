@@ -3,6 +3,7 @@
  * Simple MD-style owner detection (paired number = owner)
  * Auto-directory setup + channel branding + welcome message
  * Status react with statusJidList fix (multi-source poster detection)
+ * Anti-delete with store persistence
  */
 
 const express = require('express');
@@ -341,6 +342,22 @@ async function startNexora() {
         if (processedMessages.has(mek.key.id)) return;
         processedMessages.add(mek.key.id);
 
+        // ─── SAVE TO STORE (for anti-delete) ───
+        try {
+          if (!store.messages[chatId]) store.messages[chatId] = {};
+          store.messages[chatId][mek.key.id] = {
+            key: mek.key,
+            message: mek.message,
+            pushName: mek.pushName,
+            messageTimestamp: mek.messageTimestamp
+          };
+          const keys = Object.keys(store.messages[chatId]);
+          if (keys.length > 200) {
+            const toDelete = keys.slice(0, keys.length - 200);
+            toDelete.forEach(k => delete store.messages[chatId][k]);
+          }
+        } catch (e) {}
+
         mek.message = (Object.keys(mek.message)[0] === 'ephemeralMessage')
           ? mek.message.ephemeralMessage.message
           : mek.message;
@@ -398,7 +415,6 @@ async function startNexora() {
             const autoView = global.autoStatusFlags?.seen !== undefined ? global.autoStatusFlags.seen : true;
             const autoReact = global.autoStatusFlags?.react !== undefined ? global.autoStatusFlags.react : true;
 
-            // ─── AUTO VIEW ───
             if (autoView) {
               try {
                 await Nexora.readMessages([mek.key]);
@@ -408,19 +424,15 @@ async function startNexora() {
               }
             }
 
-            // ─── AUTO REACT ───
             if (autoReact) {
               try {
-                // Log raw key for debugging
                 console.log('[STATUS] RAW KEY:', JSON.stringify(mek.key));
 
-                // Try every possible source for the poster JID
                 let statusSender =
                   mek.key.participant ||
                   mek.participant ||
                   null;
 
-                // Try contextInfo from any message type
                 if (!statusSender && mek.message) {
                   const msgKeys = Object.keys(mek.message || {});
                   for (const k of msgKeys) {
@@ -438,7 +450,6 @@ async function startNexora() {
                   const randomEmoji = REACTION_EMOJIS[Math.floor(Math.random() * REACTION_EMOJIS.length)];
                   console.log('[STATUS] Reacting', randomEmoji, 'to', statusSender);
 
-                  // Build JID list: poster + bot itself
                   const jidList = [statusSender];
                   if (Nexora.user && Nexora.user.id) {
                     const botJid = Nexora.user.id.split(':')[0] + '@s.whatsapp.net';
@@ -506,7 +517,7 @@ async function startNexora() {
     });
 
     // ─────────────────────────────────────────
-    // ANTI-DELETE
+    // ANTI-DELETE (with logging)
     // ─────────────────────────────────────────
     Nexora.ev.on('messages.update', async (updates) => {
       try {
@@ -519,6 +530,8 @@ async function startNexora() {
 
           if (protocol && protocol.type === 0) {
             const key = protocol.key;
+            console.log('[ANTI-DELETE] Delete detected for:', key.id);
+
             let originalMsg = await store.loadMessage(key.remoteJid, key.id);
 
             if (!originalMsg) {
@@ -528,7 +541,12 @@ async function startNexora() {
               } catch (e) {}
             }
 
-            if (!originalMsg) continue;
+            if (!originalMsg) {
+              console.log('[ANTI-DELETE] Original message not found in store');
+              continue;
+            }
+
+            console.log('[ANTI-DELETE] Recovered message, sending to owner');
 
             const sender = key.participant || key.remoteJid;
             const senderName = await Nexora.getName(sender) || sender.split('@')[0];
@@ -550,7 +568,9 @@ RECOVERED MESSAGE:`;
 
             try {
               await Nexora.copyNForward(ownerJid, originalMsg, true);
+              console.log('[ANTI-DELETE] Forwarded successfully');
             } catch (forwardError) {
+              console.log('[ANTI-DELETE] Forward failed:', forwardError.message);
               if (originalMsg.message?.conversation) {
                 await Nexora.sendMessage(ownerJid, {
                   text: `Recovered Text:\n${originalMsg.message.conversation}`
@@ -666,7 +686,6 @@ RECOVERED MESSAGE:`;
         logger.info(`Owner    : ${settings.botOwner}`);
         logger.success('Connected.');
 
-        // Log paired number
         try {
           const paired = owner.getPairedNumber ? owner.getPairedNumber() : '';
           if (paired) {
@@ -676,7 +695,6 @@ RECOVERED MESSAGE:`;
           }
         } catch (e) {}
 
-        // Always online
         try {
           if (global.alwaysOnline) {
             await Nexora.sendPresenceUpdate('available');
