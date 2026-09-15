@@ -1,8 +1,6 @@
 /**
  * NEXORA MD - Restart & Update Command
- * Owner-only. Checks for updates, applies them via ZIP download, then restarts.
- * Uses kill -15 1 for proper Katabump / Pterodactyl restart.
- * No emojis in output. No version line - shows commit info instead.
+ * Downloads latest code, hot-reloads plugins, and restarts if needed.
  */
 
 const settings = require('../../settings');
@@ -44,8 +42,9 @@ function ensureAdmZip() {
 }
 
 const PROTECTED_FILES = ['settings.js', 'config.js', '.env'];
-const FILES_TO_COPY = ['index.js', 'main.js', 'package.json'];
-const FOLDERS_TO_COPY = ['plugins', 'lib'];
+const CORE_FILES = ['index.js', 'main.js', 'package.json'];
+const CORE_FOLDERS = ['lib'];
+const PLUGIN_FOLDER = 'plugins';
 
 async function installAdmZip(chatId, conn) {
   await conn.sendMessage(chatId, {
@@ -86,12 +85,7 @@ async function fetchCommitInfo() {
       }
     });
 
-    return {
-      sha,
-      date: formattedDate,
-      message: message.split('\n')[0],
-      newCommands
-    };
+    return { sha, date: formattedDate, message: message.split('\n')[0], newCommands };
   } catch (e) {
     console.log('[RESTART] Commit fetch failed:', e.message);
     return { sha: '', date: '', message: '', newCommands: [] };
@@ -102,6 +96,13 @@ async function downloadAndApply(chatId, conn, botRoot) {
   const tempDir = path.join(botRoot, 'temp_restart');
   const extractPath = path.join(tempDir, 'extracted');
   const zipPath = path.join(tempDir, 'repo.zip');
+
+  const result = {
+    success: false,
+    error: null,
+    coreChanged: false,
+    pluginsChanged: false
+  };
 
   try {
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
@@ -130,17 +131,19 @@ async function downloadAndApply(chatId, conn, botRoot) {
 
     const sourceFolder = path.join(extractPath, extractedFolders[0]);
 
-    for (const file of FILES_TO_COPY) {
+    // ─── Copy core files ───
+    for (const file of CORE_FILES) {
       if (PROTECTED_FILES.includes(file)) continue;
       const src = path.join(sourceFolder, file);
       const dest = path.join(botRoot, file);
       if (fs.existsSync(src)) {
         fs.copyFileSync(src, dest);
-        console.log('[RESTART] Copied file:', file);
+        result.coreChanged = true;
+        console.log('[RESTART] Copied core file:', file);
       }
     }
 
-    for (const folder of FOLDERS_TO_COPY) {
+    for (const folder of CORE_FOLDERS) {
       const src = path.join(sourceFolder, folder);
       const dest = path.join(botRoot, folder);
       if (fs.existsSync(src)) {
@@ -148,24 +151,92 @@ async function downloadAndApply(chatId, conn, botRoot) {
           fs.rmSync(dest, { recursive: true, force: true });
         }
         fs.cpSync(src, dest, { recursive: true });
-        console.log('[RESTART] Copied folder:', folder);
+        result.coreChanged = true;
+        console.log('[RESTART] Copied core folder:', folder);
       }
     }
 
+    // ─── Copy plugins ───
+    const pluginSrc = path.join(sourceFolder, PLUGIN_FOLDER);
+    const pluginDest = path.join(botRoot, PLUGIN_FOLDER);
+    if (fs.existsSync(pluginSrc)) {
+      if (fs.existsSync(pluginDest)) {
+        fs.rmSync(pluginDest, { recursive: true, force: true });
+      }
+      fs.cpSync(pluginSrc, pluginDest, { recursive: true });
+      result.pluginsChanged = true;
+      console.log('[RESTART] Copied plugins folder');
+    }
+
     fs.rmSync(tempDir, { recursive: true, force: true });
-    return { success: true };
+
+    result.success = true;
+    return result;
   } catch (e) {
     console.log('[RESTART] Download/apply failed:', e.message);
     try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) {}
-    return { success: false, error: e.message };
+    result.error = e.message;
+    return result;
   }
+}
+
+/**
+ * Hot-reload all plugins without killing the process
+ */
+function reloadPlugins(botRoot) {
+  const pluginsDir = path.join(botRoot, 'plugins');
+  if (!fs.existsSync(pluginsDir)) return 0;
+
+  const files = [];
+  function walk(dir) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile() && entry.name.endsWith('.js')) files.push(full);
+    }
+  }
+  walk(pluginsDir);
+
+  // Clear require cache for all plugin files
+  for (const filePath of files) {
+    try {
+      delete require.cache[require.resolve(filePath)];
+    } catch (e) {}
+  }
+
+  // Re-register commands
+  if (global.commands && typeof global.commands.clear === 'function') {
+    global.commands.clear();
+  } else {
+    global.commands = new Map();
+  }
+
+  let loaded = 0;
+  for (const filePath of files) {
+    try {
+      const command = require(filePath);
+      if (command && command.name && typeof command.execute === 'function') {
+        global.commands.set(command.name.toLowerCase(), command);
+        if (Array.isArray(command.aliases)) {
+          command.aliases.forEach(a => global.commands.set(a.toLowerCase(), command));
+        }
+        loaded++;
+      }
+    } catch (error) {
+      console.log(`[RESTART] Failed to reload ${path.basename(filePath)}: ${error.message}`);
+    }
+  }
+
+  console.log(`[RESTART] Hot-reloaded ${loaded} commands.`);
+  return loaded;
 }
 
 module.exports = {
   name: 'restart',
   aliases: ['reboot', 'reload', 'update'],
   category: 'owner',
-  description: 'Check for updates, apply them, and restart the bot',
+  description: 'Download updates and hot-reload plugins',
   usage: '.restart',
   ownerOnly: true,
   react: '🔄',
@@ -179,9 +250,6 @@ module.exports = {
         return;
       }
 
-      // ─────────────────────────────────────────
-      // Step 1 - Restarting message
-      // ─────────────────────────────────────────
       await conn.sendMessage(chatId, { react: { text: '🔄', key: mek.key } });
 
       await conn.sendMessage(chatId, {
@@ -197,9 +265,6 @@ module.exports = {
 
       await new Promise(r => setTimeout(r, 800));
 
-      // ─────────────────────────────────────────
-      // Step 2 - Ensure adm-zip
-      // ─────────────────────────────────────────
       if (!ensureAdmZip()) {
         const ok = await installAdmZip(chatId, conn);
         if (!ok) {
@@ -210,9 +275,6 @@ module.exports = {
         }
       }
 
-      // ─────────────────────────────────────────
-      // Step 3 - Fetch commit info
-      // ─────────────────────────────────────────
       const commitInfo = await fetchCommitInfo();
 
       let updateInfoText = '';
@@ -233,9 +295,6 @@ module.exports = {
         updateInfoText = `Could not fetch commit info.\n`;
       }
 
-      // ─────────────────────────────────────────
-      // Step 4 - Updating message
-      // ─────────────────────────────────────────
       await conn.sendMessage(chatId, {
         text:
           `${banner()}\n\n` +
@@ -248,16 +307,10 @@ module.exports = {
           `${settings.footer}`
       });
 
-      // ─────────────────────────────────────────
-      // Step 5 - Download + apply
-      // ─────────────────────────────────────────
       const applyRes = await downloadAndApply(chatId, conn, botRoot);
 
       await new Promise(r => setTimeout(r, 800));
 
-      // ─────────────────────────────────────────
-      // Step 6 - Final message
-      // ─────────────────────────────────────────
       const finalTime = formatDate(new Date());
 
       let finalText = `${banner()}\n\n`;
@@ -267,6 +320,13 @@ module.exports = {
 
       if (applyRes.success) {
         finalText += `Updates applied successfully.\n`;
+
+        // ─── HOT RELOAD PLUGINS ───
+        if (applyRes.pluginsChanged) {
+          const loaded = reloadPlugins(botRoot);
+          finalText += `\nPlugins reloaded: ${loaded} commands.\n`;
+        }
+
         if (commitInfo.newCommands.length > 0) {
           finalText += `\nNew Commands:\n`;
           commitInfo.newCommands.forEach(c => {
@@ -275,37 +335,49 @@ module.exports = {
         } else {
           finalText += `\nNo new commands detected.\n`;
         }
+
+        finalText += `\nTotal commands active: ${(global.commands && global.commands.size) || 0}\n\n`;
+
+        // Only restart if core files changed (index.js, main.js, lib/)
+        if (applyRes.coreChanged) {
+          finalText += `Core files updated. Restarting process...\n\n`;
+          finalText += `${settings.footer}`;
+          await conn.sendMessage(chatId, { text: finalText });
+
+          await new Promise(r => setTimeout(r, 2500));
+
+          console.log('[RESTART] Core files changed, restarting container...');
+          exec('kill -15 1', (error) => {
+            if (error) {
+              console.log('[RESTART] kill signal failed:', error.message);
+              process.exit(0);
+            }
+          });
+          return;
+        } else {
+          // No core changes — just plugins — no restart needed
+          finalText += `Plugins updated. No restart needed.\n`;
+          finalText += `Send ${settings.prefix || '.'}menu to verify.\n\n`;
+          finalText += `${settings.footer}`;
+          await conn.sendMessage(chatId, { text: finalText });
+          return;
+        }
       } else {
         finalText += `Update failed: ${applyRes.error}\n`;
-        finalText += `Bot will restart on current code.\n`;
+        finalText += `Bot will restart on current code.\n\n`;
+        finalText += `Status: Restarting process...\n\n`;
+        finalText += `${settings.footer}`;
+        await conn.sendMessage(chatId, { text: finalText });
+
+        await new Promise(r => setTimeout(r, 2500));
+        exec('kill -15 1', (error) => {
+          if (error) process.exit(0);
+        });
       }
-
-      finalText += `\nStatus: Restarting process...\n\n`;
-      finalText += `${settings.footer}`;
-
-      await conn.sendMessage(chatId, { text: finalText });
-
-      // Wait for message to send fully
-      await new Promise(r => setTimeout(r, 2500));
-
-      // ─────────────────────────────────────────
-      // Step 7 - Trigger restart via kill -15 1
-      // ─────────────────────────────────────────
-      console.log('[RESTART] Triggering container restart via kill -15 1...');
-
-      exec('kill -15 1', (error) => {
-        if (error) {
-          console.log('[RESTART] kill signal failed:', error.message);
-          console.log('[RESTART] Falling back to process.exit(0)');
-          process.exit(0);
-        }
-      });
 
     } catch (error) {
       console.log('[RESTART] Error:', error.message);
-      try {
-        await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
-      } catch (e) {}
+      try { await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } }); } catch (e) {}
       try {
         await conn.sendMessage(chatId, {
           text: `Restart error: ${error.message}\n\n${settings.footer}`
