@@ -1,9 +1,7 @@
 /**
  * NEXORA MD - WhatsApp Bot
- * Simple MD-style owner detection (paired number = owner)
- * Auto-directory setup + channel branding + welcome message
- * Status react with statusJidList fix (multi-source poster detection)
- * Anti-delete with store persistence
+ * Consolidated state loaders + all handlers
+ * Owner: paired number (from creds.json)
  */
 
 const express = require('express');
@@ -28,10 +26,11 @@ const chalk = require('chalk');
 const path = require('path');
 const axios = require('axios');
 
-// Auto-create data folders for worldwide users
+// Auto-create data folders
 try {
   if (!fs.existsSync('./data')) fs.mkdirSync('./data', { recursive: true });
   if (!fs.existsSync('./data/session')) fs.mkdirSync('./data/session', { recursive: true });
+  if (!fs.existsSync('./data/tmp')) fs.mkdirSync('./data/tmp', { recursive: true });
 } catch (e) {
   console.log('[NEXORA] Could not create data folders:', e.message);
 }
@@ -60,9 +59,10 @@ const pino = require("pino");
 const readline = require("readline");
 const { rmSync } = require('fs');
 
-// Initialize mode
+// ═══════════════════════════════════════════════════════
+// GLOBAL STATE
+// ═══════════════════════════════════════════════════════
 global.botMode = mode.getMode(settings.mode || 'public');
-
 global.autoWipeSeconds = 0;
 global.commands = new Map();
 global.autoReadPM = false;
@@ -79,13 +79,80 @@ try {
   global.antiDelete = settings.antiDelete;
 }
 
-global.autoTyping = {
-  enabled: settings.autoTyping,
-  dm: true,
-  groups: true,
-  status: true
-};
-global.alwaysOnline = settings.alwaysOnline;
+// Anti-edit
+try {
+  if (fs.existsSync('./data/antiedit.json')) {
+    const aeData = JSON.parse(fs.readFileSync('./data/antiedit.json', 'utf8'));
+    global.antiEdit = aeData.enabled === true;
+  } else {
+    global.antiEdit = false;
+  }
+} catch (e) {
+  global.antiEdit = false;
+}
+
+// Anti-block
+try {
+  if (fs.existsSync('./data/antiblock.json')) {
+    const abData = JSON.parse(fs.readFileSync('./data/antiblock.json', 'utf8'));
+    global.antiBlock = abData.enabled === true;
+  } else {
+    global.antiBlock = false;
+  }
+} catch (e) {
+  global.antiBlock = false;
+}
+
+// Always online
+try {
+  if (fs.existsSync('./data/alwaysonline.json')) {
+    const aoData = JSON.parse(fs.readFileSync('./data/alwaysonline.json', 'utf8'));
+    global.alwaysOnline = aoData.enabled !== false;
+  } else {
+    global.alwaysOnline = settings.alwaysOnline;
+  }
+} catch (e) {
+  global.alwaysOnline = settings.alwaysOnline;
+}
+
+// Auto-typing
+try {
+  if (fs.existsSync('./data/autotyping.json')) {
+    const atData = JSON.parse(fs.readFileSync('./data/autotyping.json', 'utf8'));
+    global.autoTyping = {
+      enabled: atData.enabled !== false,
+      dm: atData.dm !== false,
+      groups: atData.groups !== false,
+      status: atData.status !== false
+    };
+  } else {
+    global.autoTyping = {
+      enabled: settings.autoTyping,
+      dm: true,
+      groups: true,
+      status: true
+    };
+  }
+} catch (e) {
+  global.autoTyping = { enabled: settings.autoTyping, dm: true, groups: true, status: true };
+}
+
+// Auto-recording
+try {
+  if (fs.existsSync('./data/autorecording.json')) {
+    const arData = JSON.parse(fs.readFileSync('./data/autorecording.json', 'utf8'));
+    global.autoRecording = {
+      enabled: arData.enabled === true,
+      dm: arData.dm !== false,
+      groups: arData.groups !== false,
+      status: arData.status !== false
+    };
+  } else {
+    global.autoRecording = { enabled: false, dm: true, groups: true, status: true };
+  }
+} catch (e) {
+  global.autoRecording = { enabled: false, dm: true, groups: true, status: true };
+}
 
 // Auto-status flags
 try {
@@ -113,9 +180,9 @@ global.ghostMode = settings.ghostMode;
 global.antiCall = settings.antiCall;
 global.autoChatBot = settings.autoChatBot;
 
-// ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════
 // IMAGE FETCH HELPER
-// ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════
 async function fetchImageBuffer(url) {
   const res = await axios.get(url, {
     responseType: 'arraybuffer',
@@ -135,9 +202,9 @@ async function fetchImageBuffer(url) {
   return Buffer.from(res.data);
 }
 
-// ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════
 // STATUS REACTION EMOJIS
-// ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════
 function getDefaultReactionEmojis() {
   if (Array.isArray(settings.statusReactionEmojis) && settings.statusReactionEmojis.length > 0) {
     return settings.statusReactionEmojis.slice();
@@ -165,9 +232,9 @@ function loadReactionEmojis() {
 
 let REACTION_EMOJIS = loadReactionEmojis();
 
-// ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════
 // PLUGIN LOADER
-// ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════
 function loadCommands() {
   const rootDir = path.join(process.cwd(), 'plugins');
   if (!fs.existsSync(rootDir)) fs.mkdirSync(rootDir, { recursive: true });
@@ -302,30 +369,68 @@ async function startNexora() {
     Nexora.ev.on('creds.update', saveCreds);
     store.bind(Nexora.ev);
 
-    // Auto-wipe wrapper
+    // ─────────────────────────────────────────
+    // AUTO-WIPE + ANTI-BLOCK WRAPPER
+    // ─────────────────────────────────────────
     const preWipeSend = Nexora.sendMessage.bind(Nexora);
     Nexora.sendMessage = async function(jid, content, options = {}) {
-      const result = await preWipeSend(jid, content, options);
+      try {
+        const result = await preWipeSend(jid, content, options);
 
-      if (global.autoWipeSeconds > 0 &&
-          result?.key &&
-          !content?.delete &&
-          !content?.react &&
-          !content?.protocolMessage) {
-        setTimeout(async () => {
+        if (global.autoWipeSeconds > 0 &&
+            result?.key &&
+            !content?.delete &&
+            !content?.react &&
+            !content?.protocolMessage) {
+          setTimeout(async () => {
+            try {
+              await preWipeSend(jid, {
+                delete: {
+                  remoteJid: jid,
+                  fromMe: true,
+                  id: result.key.id
+                }
+              });
+            } catch (e) {}
+          }, global.autoWipeSeconds * 1000);
+        }
+
+        return result;
+      } catch (err) {
+        // Anti-block detection
+        if (global.antiBlock &&
+            err.message &&
+            (err.message.includes('forbidden') ||
+             err.message.includes('unauthorized') ||
+             err.message.includes('not-authorized'))) {
           try {
-            await preWipeSend(jid, {
-              delete: {
-                remoteJid: jid,
-                fromMe: true,
-                id: result.key.id
-              }
-            });
-          } catch (e) {}
-        }, global.autoWipeSeconds * 1000);
-      }
+            const num = String(jid).split('@')[0];
+            const detectedPath = './data/antiblock_detected.json';
+            let detected = {};
+            if (fs.existsSync(detectedPath)) {
+              detected = JSON.parse(fs.readFileSync(detectedPath, 'utf8'));
+            }
+            if (!detected[num]) {
+              detected[num] = { date: new Date().toLocaleString() };
+              fs.writeFileSync(detectedPath, JSON.stringify(detected, null, 2));
 
-      return result;
+              const ownerNum = (owner.getPairedNumber && owner.getPairedNumber()) || settings.ownerNumber;
+              if (ownerNum) {
+                const ownerJid = ownerNum.includes('@') ? ownerNum : ownerNum + '@s.whatsapp.net';
+                await preWipeSend(ownerJid, {
+                  text:
+                    `ANTI-BLOCK DETECTED\n\n` +
+                    `Number: ${num}\n` +
+                    `Time: ${new Date().toLocaleString()}\n\n` +
+                    `The bot's message to this user failed — likely blocked.\n\n` +
+                    `${settings.footer}`
+                });
+              }
+            }
+          } catch (e) {}
+        }
+        throw err;
+      }
     };
 
     // ─────────────────────────────────────────
@@ -342,7 +447,7 @@ async function startNexora() {
         if (processedMessages.has(mek.key.id)) return;
         processedMessages.add(mek.key.id);
 
-        // ─── SAVE TO STORE (for anti-delete) ───
+        // Save to store
         try {
           if (!store.messages[chatId]) store.messages[chatId] = {};
           store.messages[chatId][mek.key.id] = {
@@ -385,20 +490,41 @@ async function startNexora() {
           });
         }
 
+        // ─── AUTO-TYPING ───
         try {
-          if (!global.autoTyping || !global.autoTyping.enabled) return;
-          if (mek.key.fromMe) return;
+          if (global.autoTyping && global.autoTyping.enabled && !mek.key.fromMe) {
+            const isGroup = chatId.endsWith('@g.us');
+            const isStatus = chatId === 'status@broadcast';
 
-          const isGroup = chatId.endsWith('@g.us');
-          const isStatus = chatId === 'status@broadcast';
+            let send = false;
+            if (isStatus && global.autoTyping.status) send = true;
+            else if (isGroup && global.autoTyping.groups) send = true;
+            else if (!isGroup && !isStatus && global.autoTyping.dm) send = true;
 
-          if (isStatus && !global.autoTyping.status) return;
-          if (isGroup && !global.autoTyping.groups) return;
-          if (!isGroup && !isStatus && !global.autoTyping.dm) return;
-
-          await Nexora.sendPresenceUpdate(global.customStatus || 'composing', chatId);
+            if (send) {
+              await Nexora.sendPresenceUpdate(global.customStatus || 'composing', chatId);
+            }
+          }
         } catch (error) {}
 
+        // ─── AUTO-RECORDING ───
+        try {
+          if (global.autoRecording && global.autoRecording.enabled && !mek.key.fromMe) {
+            const isGroup = chatId.endsWith('@g.us');
+            const isStatus = chatId === 'status@broadcast';
+
+            let send = false;
+            if (isStatus && global.autoRecording.status) send = true;
+            else if (isGroup && global.autoRecording.groups) send = true;
+            else if (!isGroup && !isStatus && global.autoRecording.dm) send = true;
+
+            if (send) {
+              await Nexora.sendPresenceUpdate('recording', chatId);
+            }
+          }
+        } catch (error) {}
+
+        // ─── ALWAYS ONLINE ───
         try {
           if (global.alwaysOnline && !chatId.endsWith('@g.us')) {
             await Nexora.sendPresenceUpdate('available', chatId);
@@ -426,8 +552,6 @@ async function startNexora() {
 
             if (autoReact) {
               try {
-                console.log('[STATUS] RAW KEY:', JSON.stringify(mek.key));
-
                 let statusSender =
                   mek.key.participant ||
                   mek.participant ||
@@ -444,11 +568,8 @@ async function startNexora() {
                   }
                 }
 
-                if (!statusSender) {
-                  console.log('[STATUS] React skipped: no poster JID found');
-                } else {
+                if (statusSender) {
                   const randomEmoji = REACTION_EMOJIS[Math.floor(Math.random() * REACTION_EMOJIS.length)];
-                  console.log('[STATUS] Reacting', randomEmoji, 'to', statusSender);
 
                   const jidList = [statusSender];
                   if (Nexora.user && Nexora.user.id) {
@@ -458,37 +579,12 @@ async function startNexora() {
 
                   await Nexora.sendMessage(
                     'status@broadcast',
-                    {
-                      react: {
-                        text: randomEmoji,
-                        key: mek.key
-                      }
-                    },
+                    { react: { text: randomEmoji, key: mek.key } },
                     { statusJidList: jidList }
                   );
-
-                  console.log('[STATUS] Reacted', randomEmoji, 'to', statusSender.split('@')[0]);
                 }
               } catch (e) {
                 console.log('[STATUS] React failed:', e.message);
-
-                if (e.message && e.message.includes('rate-overlimit')) {
-                  setTimeout(async () => {
-                    try {
-                      const retrySender = mek.key.participant;
-                      if (!retrySender) return;
-                      const retryEmoji = REACTION_EMOJIS[Math.floor(Math.random() * REACTION_EMOJIS.length)];
-                      await Nexora.sendMessage(
-                        'status@broadcast',
-                        { react: { text: retryEmoji, key: mek.key } },
-                        { statusJidList: [retrySender] }
-                      );
-                      console.log('[STATUS] Retry success');
-                    } catch (retryErr) {
-                      console.log('[STATUS] Retry failed:', retryErr.message);
-                    }
-                  }, 2000);
-                }
               }
             }
           }
@@ -496,6 +592,7 @@ async function startNexora() {
           console.log('[STATUS] Block error:', error.message);
         }
 
+        // ─── CHANNEL REACTIONS ───
         try {
           if (chatId !== CHANNEL_ID) return;
           if (mek.key.fromMe) return;
@@ -517,18 +614,17 @@ async function startNexora() {
     });
 
     // ─────────────────────────────────────────
-    // ANTI-DELETE (with logging)
+    // MESSAGES.UPDATE (ANTI-DELETE + ANTI-EDIT)
     // ─────────────────────────────────────────
     Nexora.ev.on('messages.update', async (updates) => {
       try {
-        if (!global.antiDelete) return;
-
         for (const update of updates) {
           if (!update.update) continue;
 
           const protocol = update.update.protocolMessage;
 
-          if (protocol && protocol.type === 0) {
+          // ─── ANTI-DELETE ───
+          if (global.antiDelete && protocol && protocol.type === 0) {
             const key = protocol.key;
             console.log('[ANTI-DELETE] Delete detected for:', key.id);
 
@@ -545,8 +641,6 @@ async function startNexora() {
               console.log('[ANTI-DELETE] Original message not found in store');
               continue;
             }
-
-            console.log('[ANTI-DELETE] Recovered message, sending to owner');
 
             const sender = key.participant || key.remoteJid;
             const senderName = await Nexora.getName(sender) || sender.split('@')[0];
@@ -570,7 +664,6 @@ RECOVERED MESSAGE:`;
               await Nexora.copyNForward(ownerJid, originalMsg, true);
               console.log('[ANTI-DELETE] Forwarded successfully');
             } catch (forwardError) {
-              console.log('[ANTI-DELETE] Forward failed:', forwardError.message);
               if (originalMsg.message?.conversation) {
                 await Nexora.sendMessage(ownerJid, {
                   text: `Recovered Text:\n${originalMsg.message.conversation}`
@@ -578,9 +671,60 @@ RECOVERED MESSAGE:`;
               }
             }
           }
+
+          // ─── ANTI-EDIT (DM only) ───
+          if (global.antiEdit) {
+            const editedMessage = update.update.message?.editedMessage;
+            if (!editedMessage) continue;
+
+            const key = update.key;
+            if (!key) continue;
+
+            const chatId = key.remoteJid;
+            if (!chatId || chatId.endsWith('@g.us')) continue;
+            if (chatId === 'status@broadcast' || chatId.includes('@newsletter')) continue;
+
+            console.log('[ANTI-EDIT] Edit detected in', chatId.split('@')[0]);
+
+            let originalMsg = await store.loadMessage(chatId, key.id);
+
+            const sender = key.participant || key.remoteJid;
+            const senderName = await Nexora.getName(sender) || sender.split('@')[0];
+
+            let originalText = 'unknown';
+            if (originalMsg && originalMsg.message) {
+              const m = originalMsg.message;
+              originalText = m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.videoMessage?.caption || '[media]';
+            }
+
+            let newText = 'unknown';
+            const inner = editedMessage.message || editedMessage;
+            newText = inner.conversation || inner.extendedTextMessage?.text || inner.imageMessage?.caption || inner.videoMessage?.caption || '[media]';
+
+            const ownerNum = (owner.getPairedNumber && owner.getPairedNumber()) || settings.ownerNumber;
+            if (!ownerNum) continue;
+
+            const ownerJid = ownerNum.includes('@') ? ownerNum : ownerNum + '@s.whatsapp.net';
+
+            const caption =
+              `ANTI-EDIT DETECTED\n\n` +
+              `User: ${senderName}\n` +
+              `Number: ${sender.split('@')[0]}\n` +
+              `Time: ${new Date().toLocaleString()}\n\n` +
+              `ORIGINAL:\n${originalText}\n\n` +
+              `EDITED TO:\n${newText}\n\n` +
+              `${settings.footer}`;
+
+            try {
+              await Nexora.sendMessage(ownerJid, {
+                text: caption,
+                mentions: [sender]
+              });
+            } catch (e) {}
+          }
         }
       } catch (error) {
-        logger.error(`Anti-Delete Error: ${error.message}`);
+        logger.error(`messages.update: ${error.message}`);
       }
     });
 
@@ -701,7 +845,17 @@ RECOVERED MESSAGE:`;
           }
         } catch (e) {}
 
-        // Welcome message
+        // ─── AUTO-BIO TIMER ───
+        try {
+          const autobio = require('./plugins/owner/autobio');
+          if (autobio && typeof autobio.startTimer === 'function') {
+            autobio.startTimer(Nexora);
+          }
+        } catch (e) {
+          console.log('[AUTOBIO] Timer start failed:', e.message);
+        }
+
+        // ─── WELCOME MESSAGE ───
         setTimeout(async () => {
           try {
             const botNumber = Nexora.user.id.split(':')[0] + '@s.whatsapp.net';
