@@ -2,7 +2,7 @@
  * NEXORA MD - Main Handlers
  * Simple MD-style owner check (paired number = owner)
  * Public/private mode + rate limit
- * Anti-link and anti-bad watchers integrated
+ * Group watchers: anti-link, anti-bad, anti-left
  */
 
 const settings = require('./settings');
@@ -173,7 +173,7 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
     try { await handleAutoChatBot(conn, mek); } catch (e) {}
 
     // ─────────────────────────────────────────
-    // GROUP WATCHERS (anti-link, anti-bad)
+    // GROUP WATCHERS
     // ─────────────────────────────────────────
     if (chatId.endsWith('@g.us')) {
       // Anti-link
@@ -222,29 +222,21 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
 
     const commandName = rawCommand.toLowerCase();
 
-    // ─────────────────────────────────────────
-    // OWNER CHECK (simple: paired number = owner)
-    // ─────────────────────────────────────────
+    // Owner check
     const isBotOwner = owner.isOwner(sender, conn);
 
-    // ─────────────────────────────────────────
-    // MODE CHECK
-    // ─────────────────────────────────────────
+    // Mode check
     const currentMode = mode.getMode(settings.mode || 'public');
     if (currentMode === 'private' && !isBotOwner) {
       return;
     }
 
-    // ─────────────────────────────────────────
-    // RATE LIMIT
-    // ─────────────────────────────────────────
+    // Rate limit
     if (!isBotOwner && !rateLimit.isAllowed(sender, settings.rateLimitPerMinute || 10)) {
       return;
     }
 
-    // ─────────────────────────────────────────
-    // PLUGIN DISPATCH
-    // ─────────────────────────────────────────
+    // Plugin dispatch
     if (global.commands && global.commands.has(commandName)) {
       const command = global.commands.get(commandName);
 
