@@ -1,0 +1,109 @@
+/**
+ * NEXORA MD - Block User
+ * Blocks a user from the bot's WhatsApp
+ * Usage:
+ *   .block              → reply to a user to block
+ *   .block @user        → block mentioned user
+ *   .block 254712345678 → block by number
+ */
+
+const settings = require('../../settings');
+
+function cleanNum(s) {
+  return String(s || '').split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+}
+
+function isValidNumber(n) {
+  return /^[0-9]{8,15}$/.test(n);
+}
+
+module.exports = {
+  name: 'block',
+  aliases: ['blk'],
+  category: 'owner',
+  description: 'Block a WhatsApp user',
+  usage: '.block [@user | number | reply]',
+  ownerOnly: true,
+  react: '✅',
+
+  async execute(conn, mek, args, chatId, isOwner) {
+    try {
+      if (!isOwner) {
+        await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
+        return;
+      }
+
+      const contextInfo = mek.message?.extendedTextMessage?.contextInfo;
+      const mentioned = contextInfo?.mentionedJid || [];
+      const quoted = contextInfo?.participant;
+
+      let target = null;
+
+      if (mentioned.length > 0) {
+        target = mentioned[0];
+      } else if (quoted) {
+        target = quoted;
+      } else if (args[0]) {
+        const num = cleanNum(args[0]);
+        if (isValidNumber(num)) {
+          target = num + '@s.whatsapp.net';
+        }
+      }
+
+      if (!target) {
+        await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
+        await conn.sendMessage(chatId, {
+          text:
+            `Block a user\n\n` +
+            `Usage:\n` +
+            `  ${settings.prefix || '.'}block @user\n` +
+            `  ${settings.prefix || '.'}block 254712345678\n` +
+            `  ${settings.prefix || '.'}block (reply to user)\n\n` +
+            `${settings.footer}`
+        });
+        return;
+      }
+
+      const targetNum = cleanNum(target);
+
+      if (!isValidNumber(targetNum)) {
+        await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
+        await conn.sendMessage(chatId, {
+          text: `Invalid target: ${target}\n\n${settings.footer}`
+        });
+        return;
+      }
+
+      await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
+      await conn.sendMessage(chatId, { text: `Blocking ${targetNum}...` });
+
+      try {
+        await conn.updateBlockStatus(target, 'block');
+        console.log('[BLOCK] Blocked:', targetNum);
+
+        await conn.sendMessage(chatId, {
+          text:
+            `BLOCKED\n\n` +
+            `Number: ${targetNum}\n\n` +
+            `The bot will no longer receive messages from this user.\n\n` +
+            `${settings.footer}`,
+          mentions: [target]
+        });
+      } catch (e) {
+        console.log('[BLOCK] Failed:', e.message);
+        await conn.sendMessage(chatId, {
+          text: `Failed to block: ${e.message}\n\n${settings.footer}`
+        });
+      }
+
+    } catch (error) {
+      console.log('[BLOCK] Error:', error.message);
+      try { await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } }); } catch (e) {}
+      try {
+        await conn.sendMessage(chatId, {
+          text: `Error: ${error.message}\n\n${settings.footer}`
+        });
+      } catch (e) {}
+    }
+  }
+};
