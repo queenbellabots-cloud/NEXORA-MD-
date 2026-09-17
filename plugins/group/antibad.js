@@ -13,7 +13,7 @@ const BAD_WORDS = [
   'fuck', 'fck', 'fuk', 'shit', 'bitch', 'bastard',
   'asshole', 'dick', 'pussy', 'cunt', 'whore', 'slut',
   'malaya', 'kuma', 'mkundu', 'shenzi', 'mjinga',
-  'sex', 'porn', 'nude', 'xxx', 'matako', 'magi to ango', 'olundi', 'onger', 'sundu', 'ekebengi', 'tutapigana', 'tupigane', 'sikupendi'
+  'sex', 'porn', 'nude', 'xxx', 'matako', 'magi to ango', 'olundi', 'onger', 'sundu', 'ekebengi', 'tutapigana', 'tupigane', 'sikupendi', 'muthuti', 'pieri', 'mukundo', 'kimoo', 'nyoko', 'egesono', 'mavii', 'kamoo', 'shenzi', 'mpumbavu', 'kumbaff', 'chizi', 'idiot', 'fooligan'
 ];
 
 function hasBadWord(text) {
