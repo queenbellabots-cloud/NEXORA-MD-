@@ -1,6 +1,9 @@
 /**
  * NEXORA MD - Main Handlers
- * Auto-chatbot with keyless David Cyril API
+ * Simple MD-style owner check (paired number = owner)
+ * Public/private mode + rate limit
+ * Group watchers: anti-link, anti-bad, anti-left
+ * Auto-chatbot: Pollinations (free, keyless) + fallbacks
  */
 
 const settings = require('./settings');
@@ -14,6 +17,9 @@ const logger = require('./lib/logger');
 
 const cleanNumber = owner.cleanNumber;
 
+// ═══════════════════════════════════════════════════════
+// EMOJI COMMAND DETECTION
+// ═══════════════════════════════════════════════════════
 function isEmojiCommand(text) {
   if (!text || text.length === 0) return false;
   const emojiRegex = /^[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{200D}]+$/u;
@@ -26,6 +32,9 @@ function getBotOwnerNumber() {
   return settings.ownerNumber || null;
 }
 
+// ═══════════════════════════════════════════════════════
+// MEDIA EXTRACTION
+// ═══════════════════════════════════════════════════════
 function extractMedia(quoted) {
   if (!quoted) return null;
   let inner = quoted;
@@ -51,6 +60,9 @@ async function downloadMedia(mediaInfo) {
   }
 }
 
+// ═══════════════════════════════════════════════════════
+// SILENT REVEAL
+// ═══════════════════════════════════════════════════════
 async function silentReveal(conn, mek, chatId) {
   try {
     const quoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
@@ -69,7 +81,15 @@ async function silentReveal(conn, mek, chatId) {
     const sender = mek.key.participant || mek.key.remoteJid;
     const senderNumber = cleanNumber(sender);
 
-    const caption = `SILENT REVEAL\n\nFrom: ${senderNumber}\nChat: ${chatId.split('@')[0]}\nTime: ${new Date().toLocaleString()}\n\n${mediaInfo.caption ? `Caption:\n${mediaInfo.caption}` : ''}\n\n${settings.footer}`;
+    const caption = `SILENT REVEAL
+
+From: ${senderNumber}
+Chat: ${chatId.split('@')[0]}
+Time: ${new Date().toLocaleString()}
+
+${mediaInfo.caption ? `Caption:\n${mediaInfo.caption}` : ''}
+
+${settings.footer}`;
 
     const content = { caption };
     if (mediaInfo.type === 'image') content.image = buffer;
@@ -85,7 +105,7 @@ async function silentReveal(conn, mek, chatId) {
 }
 
 // ═══════════════════════════════════════════════════════
-// AUTO CHATBOT - KEYLESS DAVID CYRIL API
+// AUTO CHATBOT (Pollinations + fallbacks)
 // ═══════════════════════════════════════════════════════
 async function handleAutoChatBot(conn, mek) {
   try {
@@ -115,55 +135,119 @@ async function handleAutoChatBot(conn, mek) {
       await conn.sendPresenceUpdate('composing', chatId);
     } catch (e) {}
 
-    // Keyless endpoint from the official davidcyrilapi package [citation:1][citation:8]
-    const apiUrl = `https://apis.davidcyril.name.ng/ai/gpt-5?q=${encodeURIComponent(text)}`;
+    let reply = null;
+    let lastError = null;
 
+    // ─────────────────────────────────────────
+    // ATTEMPT 1: Pollinations POST (OpenAI-compatible)
+    // ─────────────────────────────────────────
     try {
-      console.log('[AUTOCHATBOT] Calling:', apiUrl.split('?')[0]);
+      console.log('[AUTOCHATBOT] Trying: pollinations (POST)');
 
-      const response = await axios.get(apiUrl, { timeout: 30000 });
+      const res = await axios.post('https://text.pollinations.ai/openai', {
+        model: 'openai',
+        messages: [
+          { role: 'system', content: 'You are NEXORA, a helpful WhatsApp assistant. Reply naturally in the language the user uses. Keep replies concise unless detail is requested.' },
+          { role: 'user', content: text }
+        ]
+      }, {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 45000
+      });
 
-      let reply =
-        response.data?.reply ||
-        response.data?.response ||
-        response.data?.message ||
-        response.data?.result ||
-        response.data?.answer ||
-        response.data?.data ||
-        response.data?.text ||
-        (typeof response.data === 'string' ? response.data : null);
+      const candidate =
+        res.data?.choices?.[0]?.message?.content ||
+        res.data?.reply ||
+        res.data?.response ||
+        (typeof res.data === 'string' ? res.data : null);
 
-      if (!reply || typeof reply !== 'string' || reply.trim().length === 0) {
-        throw new Error('Empty response from AI');
+      if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
+        reply = candidate.trim();
+        console.log('[AUTOCHATBOT] Success: pollinations POST');
       }
+    } catch (e) {
+      lastError = e.message;
+      console.log('[AUTOCHATBOT] Pollinations POST failed:', e.message);
+    }
 
-      reply = reply.replace(/\*\*/g, '*').trim();
+    // ─────────────────────────────────────────
+    // ATTEMPT 2: Pollinations GET
+    // ─────────────────────────────────────────
+    if (!reply) {
+      try {
+        console.log('[AUTOCHATBOT] Trying: pollinations (GET)');
 
-      // Split long replies
-      const MAX_LEN = 4000;
-      if (reply.length > MAX_LEN) {
-        const chunks = [];
-        for (let i = 0; i < reply.length; i += MAX_LEN) {
-          chunks.push(reply.slice(i, i + MAX_LEN));
+        const url = `https://text.pollinations.ai/${encodeURIComponent(text)}?model=openai`;
+        const res = await axios.get(url, { timeout: 45000 });
+
+        const candidate = typeof res.data === 'string'
+          ? res.data
+          : (res.data?.reply || res.data?.response);
+
+        if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
+          reply = candidate.trim();
+          console.log('[AUTOCHATBOT] Success: pollinations GET');
         }
-        for (let i = 0; i < chunks.length; i++) {
-          const label = chunks.length > 1 ? `\n\n(Part ${i + 1}/${chunks.length})` : '';
-          await conn.sendMessage(chatId, { text: chunks[i] + label });
-          await new Promise(r => setTimeout(r, 500));
-        }
-      } else {
-        await conn.sendMessage(chatId, { text: reply });
+      } catch (e) {
+        lastError = e.message;
+        console.log('[AUTOCHATBOT] Pollinations GET failed:', e.message);
       }
+    }
 
-      console.log('[AUTOCHATBOT] Replied to', sender.split('@')[0]);
-    } catch (error) {
-      console.log('[AUTOCHATBOT] API error:', error.message);
+    // ─────────────────────────────────────────
+    // ATTEMPT 3: SimSimi (simple chat fallback)
+    // ─────────────────────────────────────────
+    if (!reply) {
+      try {
+        console.log('[AUTOCHATBOT] Trying: simsimi');
+
+        const url = `https://api.simsimi.net/v2/?text=${encodeURIComponent(text)}&lc=en`;
+        const res = await axios.get(url, { timeout: 20000 });
+
+        const candidate = res.data?.success || res.data?.response || res.data?.msg;
+
+        if (candidate && typeof candidate === 'string' && candidate.trim().length > 0 && candidate !== 'success') {
+          reply = candidate.trim();
+          console.log('[AUTOCHATBOT] Success: simsimi');
+        }
+      } catch (e) {
+        lastError = e.message;
+        console.log('[AUTOCHATBOT] SimSimi failed:', e.message);
+      }
+    }
+
+    // ─────────────────────────────────────────
+    // All failed
+    // ─────────────────────────────────────────
+    if (!reply) {
+      console.log('[AUTOCHATBOT] All endpoints failed. Last error:', lastError);
       try {
         await conn.sendMessage(chatId, {
           text: 'AI service is currently unavailable. Try again later.'
         });
       } catch (e) {}
+      return;
     }
+
+    reply = reply.replace(/\*\*/g, '*').trim();
+
+    // Split long replies
+    const MAX_LEN = 4000;
+    if (reply.length > MAX_LEN) {
+      const chunks = [];
+      for (let i = 0; i < reply.length; i += MAX_LEN) {
+        chunks.push(reply.slice(i, i + MAX_LEN));
+      }
+      for (let i = 0; i < chunks.length; i++) {
+        const label = chunks.length > 1 ? `\n\n(Part ${i + 1}/${chunks.length})` : '';
+        await conn.sendMessage(chatId, { text: chunks[i] + label });
+        await new Promise(r => setTimeout(r, 500));
+      }
+    } else {
+      await conn.sendMessage(chatId, { text: reply });
+    }
+
+    console.log('[AUTOCHATBOT] Replied to', sender.split('@')[0]);
   } catch (error) {
     logger.error(`Auto-ChatBot Error: ${error.message}`);
   }
@@ -191,16 +275,23 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
 
     try { await handleAutoChatBot(conn, mek); } catch (e) {}
 
+    // ─────────────────────────────────────────
+    // GROUP WATCHERS
+    // ─────────────────────────────────────────
     if (chatId.endsWith('@g.us')) {
       try {
         const { antiLinkWatcher } = require('./plugins/group/antilink');
         await antiLinkWatcher(conn, mek, chatId);
-      } catch (e) {}
+      } catch (e) {
+        console.log('[ANTILINK] Hook error:', e.message);
+      }
 
       try {
         const { antiBadWatcher } = require('./plugins/group/antibad');
         await antiBadWatcher(conn, mek, chatId);
-      } catch (e) {}
+      } catch (e) {
+        console.log('[ANTIBAD] Hook error:', e.message);
+      }
     }
 
     if (!text) return;
@@ -215,6 +306,9 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
 
     const sender = mek.key.participant || mek.key.remoteJid;
 
+    // ─────────────────────────────────────────
+    // EMOJI-ONLY REPLY → SILENT REVEAL
+    // ─────────────────────────────────────────
     if (isEmojiCommand(rawCommand)) {
       const quoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
       if (quoted) {
@@ -236,16 +330,23 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
 
     if (!isBotOwner && !rateLimit.isAllowed(sender, settings.rateLimitPerMinute || 10)) return;
 
+    // ─────────────────────────────────────────
+    // PLUGIN DISPATCH
+    // ─────────────────────────────────────────
     if (global.commands && global.commands.has(commandName)) {
       const command = global.commands.get(commandName);
 
       if (command.ownerOnly && !isBotOwner) {
-        try { await conn.sendMessage(chatId, { react: { text: settings.reactionError, key: mek.key } }); } catch (e) {}
+        try {
+          await conn.sendMessage(chatId, { react: { text: settings.reactionError, key: mek.key } });
+        } catch (e) {}
         return;
       }
 
       if (command.groupOnly && !chatId.endsWith('@g.us')) {
-        try { await conn.sendMessage(chatId, { react: { text: settings.reactionError, key: mek.key } }); } catch (e) {}
+        try {
+          await conn.sendMessage(chatId, { react: { text: settings.reactionError, key: mek.key } });
+        } catch (e) {}
         return;
       }
 
@@ -253,11 +354,15 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
         await command.execute(conn, mek, args, chatId, isBotOwner);
       } catch (error) {
         logger.error(`Error executing ${commandName}: ${error.message}`);
-        try { await conn.sendMessage(chatId, { react: { text: settings.reactionError, key: mek.key } }); } catch (e) {}
+        try {
+          await conn.sendMessage(chatId, { react: { text: settings.reactionError, key: mek.key } });
+        } catch (e) {}
       }
     } else {
       if (currentMode !== 'private') {
-        await conn.sendMessage(chatId, { text: `Unknown command: ${text}\nType ${prefix}menu` });
+        await conn.sendMessage(chatId, {
+          text: `Unknown command: ${text}\nType ${prefix}menu`
+        });
       }
     }
   } catch (error) {
@@ -265,9 +370,13 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
   }
 }
 
+// ═══════════════════════════════════════════════════════
+// GROUP PARTICIPANT UPDATE
+// ═══════════════════════════════════════════════════════
 async function handleGroupParticipantUpdate(conn, update) {
   try {
     logger.info(`Group update: ${update.id} (${update.action})`);
+
     try {
       const { antiLeftWatcher } = require('./plugins/group/antileft');
       await antiLeftWatcher(conn, update);
