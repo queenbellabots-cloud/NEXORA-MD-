@@ -3,7 +3,7 @@
  * Simple MD-style owner check (paired number = owner)
  * Public/private mode + rate limit
  * Group watchers: anti-link, anti-bad, anti-left
- * Auto-chatbot with GPT-4o
+ * Auto-chatbot with multi-endpoint AI fallback
  */
 
 const settings = require('./settings');
@@ -105,7 +105,7 @@ ${settings.footer}`;
 }
 
 // ═══════════════════════════════════════════════════════
-// AUTO CHATBOT (GPT-4o)
+// AUTO CHATBOT (many endpoints + query param support)
 // ═══════════════════════════════════════════════════════
 async function handleAutoChatBot(conn, mek) {
   try {
@@ -116,7 +116,6 @@ async function handleAutoChatBot(conn, mek) {
     const isStatus = chatId === 'status@broadcast';
     const isChannel = chatId.includes('@newsletter');
 
-    // DMs only
     if (isGroup || isStatus || isChannel) return;
     if (mek.key.fromMe) return;
 
@@ -126,83 +125,118 @@ async function handleAutoChatBot(conn, mek) {
     else return;
 
     if (!text) return;
-
-    // Skip commands
     if (text.startsWith(settings.prefix || '.')) return;
-
-    // Skip emoji-only
     if (/^[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]+$/u.test(text.trim())) return;
 
     const sender = mek.key.participant || mek.key.remoteJid;
     const pushName = mek.pushName || 'User';
 
-    // Show typing
     try {
       await conn.sendPresenceUpdate('composing', chatId);
     } catch (e) {}
 
-    try {
-      const response = await axios.post(
-        'https://apis.davidcyril.name.ng/ai/gpt-4o',
-        {
-          message: text,
-          name: pushName
-        },
-        {
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 45000
-        }
-      );
+    // ═══════════════════════════════════════════════════════
+    // ALL KNOWN WORKING ENDPOINTS (David Cyril + fallbacks)
+    // ═══════════════════════════════════════════════════════
+    const endpoints = [
+      // David Cyril current models
+      { url: 'https://apis.davidcyril.name.ng/ai/gpt-5', method: 'POST', body: { message: text, name: pushName } },
+      { url: 'https://apis.davidcyril.name.ng/ai/gemini3Pro', method: 'POST', body: { message: text, name: pushName } },
+      { url: 'https://apis.davidcyril.name.ng/ai/claudeSonnet46', method: 'POST', body: { message: text, name: pushName } },
+      { url: 'https://apis.davidcyril.name.ng/ai/chatgpt', method: 'POST', body: { message: text, name: pushName } },
+      { url: 'https://apis.davidcyril.name.ng/ai/gemini', method: 'POST', body: { message: text, name: pushName } },
+      { url: 'https://apis.davidcyril.name.ng/ai/gpt3', method: 'POST', body: { message: text, name: pushName } },
 
-      let reply =
-        response.data?.reply ||
-        response.data?.response ||
-        response.data?.message ||
-        response.data?.result ||
-        response.data?.answer ||
-        response.data?.data ||
-        'Sorry, I could not process that.';
+      // Query param fallbacks (if POST fails, try GET)
+      { url: `https://apis.davidcyril.name.ng/ai/gpt-5?q=${encodeURIComponent(text)}`, method: 'GET' },
+      { url: `https://apis.davidcyril.name.ng/ai/gemini3Pro?q=${encodeURIComponent(text)}`, method: 'GET' },
+      { url: `https://apis.davidcyril.name.ng/ai/chatgpt?q=${encodeURIComponent(text)}`, method: 'GET' },
 
-      if (typeof reply !== 'string') {
-        reply = JSON.stringify(reply);
-      }
+      // Alternative free APIs
+      { url: `https://api.popcat.xyz/chatbot?msg=${encodeURIComponent(text)}`, method: 'GET' },
+      { url: `https://api.affiliateplus.xyz/api/chatbot?message=${encodeURIComponent(text)}&botname=NEXORA&ownername=Rodgers`, method: 'GET' },
+      { url: `https://api.simsimi.net/v2/?text=${encodeURIComponent(text)}&lc=en`, method: 'GET' }
+    ];
 
-      reply = reply.replace(/\*\*/g, '*').trim();
+    let reply = null;
+    let lastError = null;
 
-      // Split if too long
-      const MAX_LEN = 4000;
-      if (reply.length > MAX_LEN) {
-        const chunks = [];
-        for (let i = 0; i < reply.length; i += MAX_LEN) {
-          chunks.push(reply.slice(i, i + MAX_LEN));
-        }
-        for (let i = 0; i < chunks.length; i++) {
-          const label = chunks.length > 1 ? `\n\n(Part ${i + 1}/${chunks.length})` : '';
-          await conn.sendMessage(chatId, {
-            text: chunks[i] + label
-          });
-          await new Promise(r => setTimeout(r, 500));
-        }
-      } else {
-        await conn.sendMessage(chatId, { text: reply });
-      }
-
-      console.log('[AUTOCHATBOT] Replied to', sender.split('@')[0]);
-    } catch (error) {
-      console.log('[AUTOCHATBOT] API error:', error.message);
-
-      let errMsg = 'AI service is unavailable. Try again later.';
-      if (error.response && error.response.status === 429) {
-        errMsg = 'AI service is busy. Try again in a moment.';
-      } else if (error.code === 'ECONNABORTED') {
-        errMsg = 'AI request timed out. Try again.';
-      }
-
+    for (const ep of endpoints) {
       try {
-        await conn.sendMessage(chatId, { text: errMsg });
-      } catch (e) {}
+        let response;
+        if (ep.method === 'POST') {
+          response = await axios.post(ep.url, ep.body, {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 30000
+          });
+        } else {
+          response = await axios.get(ep.url, { timeout: 30000 });
+        }
+
+        const data = response.data;
+        let candidate =
+          data?.reply ||
+          data?.response ||
+          data?.message ||
+          data?.result ||
+          data?.answer ||
+          data?.data ||
+          data?.text ||
+          data?.success ||
+          data?.msg ||
+          (typeof data === 'string' ? data : null);
+
+        // Special handling for simsimi
+        if (!candidate && data?.success === 'success') {
+          candidate = data?.response;
+        }
+
+        // Special handling for popcat
+        if (!candidate && data?.chat) {
+          candidate = data.chat;
+        }
+
+        if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
+          reply = candidate.trim();
+          console.log('[AUTOCHATBOT] Success from:', ep.url.split('?')[0]);
+          break;
+        } else {
+          console.log('[AUTOCHATBOT] No valid reply from:', ep.url.split('?')[0]);
+        }
+      } catch (err) {
+        lastError = err.message;
+        console.log('[AUTOCHATBOT] Endpoint failed:', ep.url.split('?')[0], '-', err.message);
+      }
     }
 
+    if (!reply) {
+      console.log('[AUTOCHATBOT] All endpoints failed. Last error:', lastError);
+      try {
+        await conn.sendMessage(chatId, {
+          text: 'AI service is currently unavailable. Try again later.'
+        });
+      } catch (e) {}
+      return;
+    }
+
+    reply = reply.replace(/\*\*/g, '*').trim();
+
+    const MAX_LEN = 4000;
+    if (reply.length > MAX_LEN) {
+      const chunks = [];
+      for (let i = 0; i < reply.length; i += MAX_LEN) {
+        chunks.push(reply.slice(i, i + MAX_LEN));
+      }
+      for (let i = 0; i < chunks.length; i++) {
+        const label = chunks.length > 1 ? `\n\n(Part ${i + 1}/${chunks.length})` : '';
+        await conn.sendMessage(chatId, { text: chunks[i] + label });
+        await new Promise(r => setTimeout(r, 500));
+      }
+    } else {
+      await conn.sendMessage(chatId, { text: reply });
+    }
+
+    console.log('[AUTOCHATBOT] Replied to', sender.split('@')[0]);
   } catch (error) {
     logger.error(`Auto-ChatBot Error: ${error.message}`);
   }
@@ -230,23 +264,16 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
 
     try { await handleAutoChatBot(conn, mek); } catch (e) {}
 
-    // ─────────────────────────────────────────
-    // GROUP WATCHERS
-    // ─────────────────────────────────────────
     if (chatId.endsWith('@g.us')) {
       try {
         const { antiLinkWatcher } = require('./plugins/group/antilink');
         await antiLinkWatcher(conn, mek, chatId);
-      } catch (e) {
-        console.log('[ANTILINK] Hook error:', e.message);
-      }
+      } catch (e) {}
 
       try {
         const { antiBadWatcher } = require('./plugins/group/antibad');
         await antiBadWatcher(conn, mek, chatId);
-      } catch (e) {
-        console.log('[ANTIBAD] Hook error:', e.message);
-      }
+      } catch (e) {}
     }
 
     if (!text) return;
@@ -278,28 +305,20 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
     const isBotOwner = owner.isOwner(sender, conn);
 
     const currentMode = mode.getMode(settings.mode || 'public');
-    if (currentMode === 'private' && !isBotOwner) {
-      return;
-    }
+    if (currentMode === 'private' && !isBotOwner) return;
 
-    if (!isBotOwner && !rateLimit.isAllowed(sender, settings.rateLimitPerMinute || 10)) {
-      return;
-    }
+    if (!isBotOwner && !rateLimit.isAllowed(sender, settings.rateLimitPerMinute || 10)) return;
 
     if (global.commands && global.commands.has(commandName)) {
       const command = global.commands.get(commandName);
 
       if (command.ownerOnly && !isBotOwner) {
-        try {
-          await conn.sendMessage(chatId, { react: { text: settings.reactionError, key: mek.key } });
-        } catch (e) {}
+        try { await conn.sendMessage(chatId, { react: { text: settings.reactionError, key: mek.key } }); } catch (e) {}
         return;
       }
 
       if (command.groupOnly && !chatId.endsWith('@g.us')) {
-        try {
-          await conn.sendMessage(chatId, { react: { text: settings.reactionError, key: mek.key } });
-        } catch (e) {}
+        try { await conn.sendMessage(chatId, { react: { text: settings.reactionError, key: mek.key } }); } catch (e) {}
         return;
       }
 
@@ -307,15 +326,11 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
         await command.execute(conn, mek, args, chatId, isBotOwner);
       } catch (error) {
         logger.error(`Error executing ${commandName}: ${error.message}`);
-        try {
-          await conn.sendMessage(chatId, { react: { text: settings.reactionError, key: mek.key } });
-        } catch (e) {}
+        try { await conn.sendMessage(chatId, { react: { text: settings.reactionError, key: mek.key } }); } catch (e) {}
       }
     } else {
       if (currentMode !== 'private') {
-        await conn.sendMessage(chatId, {
-          text: `Unknown command: ${text}\nType ${prefix}menu`
-        });
+        await conn.sendMessage(chatId, { text: `Unknown command: ${text}\nType ${prefix}menu` });
       }
     }
   } catch (error) {
