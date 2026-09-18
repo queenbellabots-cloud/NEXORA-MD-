@@ -154,6 +154,18 @@ try {
   global.autoRecording = { enabled: false, dm: true, groups: true, status: true };
 }
 
+// Auto-chatbot
+try {
+  if (fs.existsSync('./data/autochatbot.json')) {
+    const acData = JSON.parse(fs.readFileSync('./data/autochatbot.json', 'utf8'));
+    global.autoChatBot = acData.enabled === true;
+  } else {
+    global.autoChatBot = settings.autoChatBot || false;
+  }
+} catch (e) {
+  global.autoChatBot = settings.autoChatBot || false;
+}
+
 // Auto-status flags
 try {
   if (fs.existsSync('./data/status.json')) {
@@ -178,7 +190,6 @@ try {
 global.customStatus = 'composing';
 global.ghostMode = settings.ghostMode;
 global.antiCall = settings.antiCall;
-global.autoChatBot = settings.autoChatBot;
 
 // ═══════════════════════════════════════════════════════
 // IMAGE FETCH HELPER
