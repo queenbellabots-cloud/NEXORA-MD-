@@ -3,7 +3,7 @@
  * Simple MD-style owner check (paired number = owner)
  * Public/private mode + rate limit
  * Group watchers: anti-link, anti-bad, anti-left
- * Auto-chatbot: Pollinations (free, keyless) + fallbacks
+ * Auto-chatbot: Omegatech AI (with session memory + fallback)
  */
 
 const settings = require('./settings');
@@ -105,7 +105,7 @@ ${settings.footer}`;
 }
 
 // ═══════════════════════════════════════════════════════
-// AUTO CHATBOT (Pollinations + fallbacks)
+// AUTO CHATBOT (Omegatech AI + fallback)
 // ═══════════════════════════════════════════════════════
 async function handleAutoChatBot(conn, mek) {
   try {
@@ -135,43 +135,86 @@ async function handleAutoChatBot(conn, mek) {
       await conn.sendPresenceUpdate('composing', chatId);
     } catch (e) {}
 
+    // Persistent session per sender (for context memory)
+    const senderNum = sender.split('@')[0].split(':')[0];
+    const sessionId = 'nexora_' + senderNum;
+
     let reply = null;
     let lastError = null;
 
     // ─────────────────────────────────────────
-    // ATTEMPT 1: Pollinations POST (OpenAI-compatible)
+    // ATTEMPT 1: Omegatech AI
     // ─────────────────────────────────────────
     try {
-      console.log('[AUTOCHATBOT] Trying: pollinations (POST)');
+      console.log('[AUTOCHATBOT] Trying: Omegatech');
 
-      const res = await axios.post('https://text.pollinations.ai/openai', {
-        model: 'openai',
-        messages: [
-          { role: 'system', content: 'You are NEXORA, a helpful WhatsApp assistant. Reply naturally in the language the user uses. Keep replies concise unless detail is requested.' },
-          { role: 'user', content: text }
-        ]
+      const res = await axios.post('https://api.omegatech.xyz/ai/chat', {
+        message: text,
+        sessionId,
+        name: pushName
       }, {
         headers: { 'Content-Type': 'application/json' },
         timeout: 45000
       });
 
+      const data = res.data;
       const candidate =
-        res.data?.choices?.[0]?.message?.content ||
-        res.data?.reply ||
-        res.data?.response ||
-        (typeof res.data === 'string' ? res.data : null);
+        data?.reply ||
+        data?.response ||
+        data?.message ||
+        data?.result ||
+        data?.answer ||
+        data?.data ||
+        null;
 
       if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
-        reply = candidate.trim();
-        console.log('[AUTOCHATBOT] Success: pollinations POST');
+        // Skip if it's just echoing input
+        if (candidate.trim() !== text.trim() || data?.success === true) {
+          reply = candidate.trim();
+          console.log('[AUTOCHATBOT] Success: Omegatech');
+        }
       }
     } catch (e) {
       lastError = e.message;
-      console.log('[AUTOCHATBOT] Pollinations POST failed:', e.message);
+      console.log('[AUTOCHATBOT] Omegatech failed:', e.message);
     }
 
     // ─────────────────────────────────────────
-    // ATTEMPT 2: Pollinations GET
+    // ATTEMPT 2: Pollinations POST
+    // ─────────────────────────────────────────
+    if (!reply) {
+      try {
+        console.log('[AUTOCHATBOT] Trying: pollinations (POST)');
+
+        const res = await axios.post('https://text.pollinations.ai/openai', {
+          model: 'openai',
+          messages: [
+            { role: 'system', content: 'You are NEXORA, a helpful WhatsApp assistant. Reply naturally in the language the user uses.' },
+            { role: 'user', content: text }
+          ]
+        }, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 45000
+        });
+
+        const candidate =
+          res.data?.choices?.[0]?.message?.content ||
+          res.data?.reply ||
+          res.data?.response ||
+          (typeof res.data === 'string' ? res.data : null);
+
+        if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
+          reply = candidate.trim();
+          console.log('[AUTOCHATBOT] Success: pollinations POST');
+        }
+      } catch (e) {
+        lastError = e.message;
+        console.log('[AUTOCHATBOT] Pollinations POST failed:', e.message);
+      }
+    }
+
+    // ─────────────────────────────────────────
+    // ATTEMPT 3: Pollinations GET
     // ─────────────────────────────────────────
     if (!reply) {
       try {
@@ -195,7 +238,7 @@ async function handleAutoChatBot(conn, mek) {
     }
 
     // ─────────────────────────────────────────
-    // ATTEMPT 3: SimSimi (simple chat fallback)
+    // ATTEMPT 4: SimSimi
     // ─────────────────────────────────────────
     if (!reply) {
       try {
