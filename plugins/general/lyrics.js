@@ -1,27 +1,24 @@
 /**
  * NEXORA MD - Lyrics
- * Fetch song lyrics via lyrics.ovh (free, no API key)
- * Usage:
- *   .lyrics <artist> - <title>
- *   .lyrics <artist> | <title>
- *   .lyrics <artist> - <title> -suggest   (search suggestions first)
+ * Two modes:
+ *   .lyrics <artist> - <song>     → fetch real lyrics
+ *   .lyrics write <topic>          → AI generates new lyrics
  */
 
 const settings = require('../../settings');
 const axios = require('axios');
 
-const API_BASE = 'https://api.lyrics.ovh';
-
+// ─────────────────────────────────────────────
+// FETCH MODE (lyrics.ovh — real lyrics)
+// ─────────────────────────────────────────────
 function parseArgs(input) {
   if (!input) return null;
 
-  // Try "artist - title"
   let parts = input.split(' - ');
   if (parts.length >= 2) {
     return { artist: parts[0].trim(), title: parts.slice(1).join(' - ').trim() };
   }
 
-  // Try "artist | title"
   parts = input.split('|');
   if (parts.length >= 2) {
     return { artist: parts[0].trim(), title: parts.slice(1).join('|').trim() };
@@ -31,23 +28,75 @@ function parseArgs(input) {
 }
 
 async function fetchLyrics(artist, title) {
-  const url = `${API_BASE}/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`;
+  const url = `https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`;
   const res = await axios.get(url, { timeout: 15000 });
   return res.data;
 }
 
 async function suggest(query, limit = 5) {
-  const url = `${API_BASE}/suggest/${encodeURIComponent(query)}`;
+  const url = `https://api.lyrics.ovh/suggest/${encodeURIComponent(query)}`;
   const res = await axios.get(url, { timeout: 15000 });
   return (res.data?.data || []).slice(0, limit);
 }
 
+// ─────────────────────────────────────────────
+// GENERATE MODE (ai-song.ai)
+// ─────────────────────────────────────────────
+async function generateLyrics(prompt) {
+  const res = await axios.post(
+    'https://ai-song.ai/api/chat-openai',
+    { lyrics: prompt },
+    {
+      headers: {
+        'Content-Type': 'text/plain;charset=UTF-8',
+        'Accept': '*/*',
+        'Origin': 'https://ai-song.ai',
+        'Referer': 'https://ai-song.ai/',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36'
+      },
+      timeout: 40000
+    }
+  );
+  return res.data;
+}
+
+// ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
+function extractGeneratedText(data) {
+  if (!data) return null;
+  if (typeof data === 'string') return data;
+  return (
+    data.lyrics ||
+    data.reply ||
+    data.response ||
+    data.message ||
+    data.result ||
+    data.text ||
+    data.data?.lyrics ||
+    data.data?.reply ||
+    data.choices?.[0]?.message?.content ||
+    null
+  );
+}
+
+function chunkAndSend(text, maxLen = 4000) {
+  if (!text) return [];
+  if (text.length <= maxLen) return [text];
+  const chunks = [];
+  for (let i = 0; i < text.length; i += maxLen) chunks.push(text.slice(i, i + maxLen));
+  return chunks;
+}
+
+// ─────────────────────────────────────────────
+// COMMAND
+// ─────────────────────────────────────────────
 module.exports = {
   name: 'lyrics',
   aliases: ['lyric', 'songlyrics'],
   category: 'general',
-  description: 'Get song lyrics',
-  usage: '.lyrics <artist> - <title>',
+  description: 'Fetch or generate song lyrics',
+  usage: '.lyrics <artist> - <title>  |  .lyrics write <topic>',
   react: '✅',
 
   async execute(conn, mek, args, chatId, isOwner) {
@@ -58,29 +107,88 @@ module.exports = {
         await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
         await conn.sendMessage(chatId, {
           text:
-            `Get song lyrics\n\n` +
-            `Usage:\n` +
+            `Lyrics\n\n` +
+            `Fetch real lyrics:\n` +
             `  ${settings.prefix || '.'}lyrics <artist> - <title>\n` +
             `  ${settings.prefix || '.'}lyrics <artist> | <title>\n\n` +
+            `Generate new lyrics (AI):\n` +
+            `  ${settings.prefix || '.'}lyrics write <topic>\n\n` +
             `Examples:\n` +
             `  ${settings.prefix || '.'}lyrics Ed Sheeran - Shape of You\n` +
-            `  ${settings.prefix || '.'}lyrics Sauti Sol - Suzanna\n\n` +
+            `  ${settings.prefix || '.'}lyrics Sauti Sol | Suzanna\n` +
+            `  ${settings.prefix || '.'}lyrics write a love song about Nairobi nights\n\n` +
             `${settings.footer}`
         });
         return;
       }
 
+      // ─────────────────────────────────────────
+      // MODE 1 — Generate new lyrics
+      // ─────────────────────────────────────────
+      if (/^write\s+/i.test(input)) {
+        const prompt = input.replace(/^write\s+/i, '').trim();
+
+        if (!prompt) {
+          await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
+          await conn.sendMessage(chatId, {
+            text: `Provide a topic. Example: ${settings.prefix || '.'}lyrics write love song\n\n${settings.footer}`
+          });
+          return;
+        }
+
+        await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
+        await conn.sendMessage(chatId, { text: `Generating lyrics for "${prompt}"...` });
+
+        let data = null;
+        try {
+          data = await generateLyrics(prompt);
+        } catch (e) {
+          console.log('[LYRICS] Generate failed:', e.message);
+        }
+
+        const text = extractGeneratedText(data);
+
+        if (!text || typeof text !== 'string' || text.trim().length < 5) {
+          await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
+          await conn.sendMessage(chatId, {
+            text: `Could not generate lyrics.\n\n${settings.footer}`
+          });
+          return;
+        }
+
+        const header = `GENERATED LYRICS\n\nPrompt: ${prompt}\n\n`;
+        const footer = `\n\n${settings.footer}`;
+
+        const chunks = chunkAndSend(text.trim(), 3500);
+
+        if (chunks.length === 1) {
+          await conn.sendMessage(chatId, { text: header + chunks[0] + footer });
+        } else {
+          await conn.sendMessage(chatId, { text: header + `${settings.footer}` });
+          for (let i = 0; i < chunks.length; i++) {
+            const label = `\n\n(Part ${i + 1}/${chunks.length})`;
+            await conn.sendMessage(chatId, { text: chunks[i] + label });
+            await new Promise(r => setTimeout(r, 500));
+          }
+        }
+
+        console.log('[LYRICS] Generated lyrics for:', prompt);
+        return;
+      }
+
+      // ─────────────────────────────────────────
+      // MODE 2 — Fetch real lyrics
+      // ─────────────────────────────────────────
       const parsed = parseArgs(input);
 
       if (!parsed) {
         await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
         await conn.sendMessage(chatId, {
           text:
-            `Could not parse input.\n\n` +
-            `Use this format:\n` +
-            `  ${settings.prefix || '.'}lyrics <artist> - <title>\n\n` +
-            `Example:\n` +
-            `  ${settings.prefix || '.'}lyrics Ed Sheeran - Shape of You\n\n` +
+            `Could not parse.\n\n` +
+            `Use one of:\n` +
+            `  ${settings.prefix || '.'}lyrics <artist> - <title>\n` +
+            `  ${settings.prefix || '.'}lyrics <artist> | <title>\n\n` +
             `${settings.footer}`
         });
         return;
@@ -98,7 +206,7 @@ module.exports = {
         console.log('[LYRICS] Fetch failed:', e.message);
       }
 
-      // If exact match fails, try suggestions
+      // If exact match fails → suggest
       if (!data || !data.lyrics) {
         try {
           const suggestions = await suggest(`${parsed.artist} ${parsed.title}`, 5);
@@ -124,38 +232,15 @@ module.exports = {
         return;
       }
 
-      // Clean up lyrics text
-      let lyrics = data.lyrics || '';
-      lyrics = lyrics.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-
-      // WhatsApp message limit — split if too long
-      const MAX_LEN = 4000;
-
+      let lyrics = (data.lyrics || '').replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
       const header = `LYRICS\n\n${data.artist?.name || parsed.artist} - ${data.title || parsed.title}\n\n`;
 
-      if ((header + lyrics).length <= MAX_LEN) {
-        await conn.sendMessage(chatId, {
-          text: header + lyrics + `\n\n${settings.footer}`
-        });
-      } else {
-        // Send header first
-        await conn.sendMessage(chatId, {
-          text: header + `\n${settings.footer}`
-        });
+      const fullText = header + lyrics + `\n\n${settings.footer}`;
+      const chunks = chunkAndSend(fullText, 4000);
 
-        // Split lyrics into chunks
-        const chunks = [];
-        for (let i = 0; i < lyrics.length; i += MAX_LEN) {
-          chunks.push(lyrics.slice(i, i + MAX_LEN));
-        }
-
-        for (let i = 0; i < chunks.length; i++) {
-          const partLabel = chunks.length > 1 ? `\n\n(Part ${i + 1}/${chunks.length})` : '';
-          await conn.sendMessage(chatId, {
-            text: chunks[i] + partLabel
-          });
-          await new Promise(r => setTimeout(r, 500));
-        }
+      for (const chunk of chunks) {
+        await conn.sendMessage(chatId, { text: chunk });
+        if (chunks.length > 1) await new Promise(r => setTimeout(r, 500));
       }
 
     } catch (error) {
