@@ -1,15 +1,15 @@
 /**
  * NEXORA MD - Lyrics
  * Two modes:
- *   .lyrics <artist> - <song>     → fetch real lyrics
- *   .lyrics write <topic>          → AI generates new lyrics
+ *   .lyrics <artist> - <song>     → fetch real lyrics (auto-tries suggestions)
+ *   .lyrics write <topic>          → AI generates full song
  */
 
 const settings = require('../../settings');
 const axios = require('axios');
 
 // ─────────────────────────────────────────────
-// FETCH MODE (lyrics.ovh — real lyrics)
+// FETCH MODE
 // ─────────────────────────────────────────────
 function parseArgs(input) {
   if (!input) return null;
@@ -40,7 +40,7 @@ async function suggest(query, limit = 5) {
 }
 
 // ─────────────────────────────────────────────
-// GENERATE MODE (ai-song.ai)
+// GENERATE MODE
 // ─────────────────────────────────────────────
 async function generateLyrics(prompt) {
   const res = await axios.post(
@@ -54,7 +54,7 @@ async function generateLyrics(prompt) {
         'Referer': 'https://ai-song.ai/',
         'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36'
       },
-      timeout: 40000
+      timeout: 60000
     }
   );
   return res.data;
@@ -115,40 +115,55 @@ module.exports = {
             `  ${settings.prefix || '.'}lyrics write <topic>\n\n` +
             `Examples:\n` +
             `  ${settings.prefix || '.'}lyrics Ed Sheeran - Shape of You\n` +
-            `  ${settings.prefix || '.'}lyrics Sauti Sol | Suzanna\n` +
-            `  ${settings.prefix || '.'}lyrics write a love song about Nairobi nights\n\n` +
+            `  ${settings.prefix || '.'}lyrics Otile Brown | Dusuma\n` +
+            `  ${settings.prefix || '.'}lyrics write a love song about Nairobi\n\n` +
             `${settings.footer}`
         });
         return;
       }
 
-      // ─────────────────────────────────────────
+      // ═════════════════════════════════════════
       // MODE 1 — Generate new lyrics
-      // ─────────────────────────────────────────
+      // ═════════════════════════════════════════
       if (/^write\s+/i.test(input)) {
-        const prompt = input.replace(/^write\s+/i, '').trim();
+        const rawPrompt = input.replace(/^write\s+/i, '').trim();
 
-        if (!prompt) {
+        if (!rawPrompt) {
           await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
           await conn.sendMessage(chatId, {
-            text: `Provide a topic. Example: ${settings.prefix || '.'}lyrics write love song\n\n${settings.footer}`
+            text: `Provide a topic.\n\n${settings.footer}`
           });
           return;
         }
 
+        // Build a strong prompt that requests a FULL song
+        const fullPrompt =
+          `Write a complete full-length song about: ${rawPrompt}.\n\n` +
+          `Structure it as:\n` +
+          `[Verse 1] - 8 lines\n` +
+          `[Pre-Chorus] - 4 lines\n` +
+          `[Chorus] - 8 lines\n` +
+          `[Verse 2] - 8 lines\n` +
+          `[Chorus] - 8 lines\n` +
+          `[Bridge] - 4 lines\n` +
+          `[Chorus] - 8 lines\n` +
+          `[Outro] - 2 lines\n\n` +
+          `Make it emotionally rich, poetic, and complete. ` +
+          `Do not stop early. Write the full song with all sections.`;
+
         await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
-        await conn.sendMessage(chatId, { text: `Generating lyrics for "${prompt}"...` });
+        await conn.sendMessage(chatId, { text: `Generating full song about "${rawPrompt}"...` });
 
         let data = null;
         try {
-          data = await generateLyrics(prompt);
+          data = await generateLyrics(fullPrompt);
         } catch (e) {
           console.log('[LYRICS] Generate failed:', e.message);
         }
 
         const text = extractGeneratedText(data);
 
-        if (!text || typeof text !== 'string' || text.trim().length < 5) {
+        if (!text || typeof text !== 'string' || text.trim().length < 10) {
           await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
           await conn.sendMessage(chatId, {
             text: `Could not generate lyrics.\n\n${settings.footer}`
@@ -156,7 +171,7 @@ module.exports = {
           return;
         }
 
-        const header = `GENERATED LYRICS\n\nPrompt: ${prompt}\n\n`;
+        const header = `GENERATED LYRICS\n\nPrompt: ${rawPrompt}\n\n`;
         const footer = `\n\n${settings.footer}`;
 
         const chunks = chunkAndSend(text.trim(), 3500);
@@ -172,13 +187,13 @@ module.exports = {
           }
         }
 
-        console.log('[LYRICS] Generated lyrics for:', prompt);
+        console.log('[LYRICS] Generated lyrics for:', rawPrompt);
         return;
       }
 
-      // ─────────────────────────────────────────
+      // ═════════════════════════════════════════
       // MODE 2 — Fetch real lyrics
-      // ─────────────────────────────────────────
+      // ═════════════════════════════════════════
       const parsed = parseArgs(input);
 
       if (!parsed) {
@@ -186,7 +201,7 @@ module.exports = {
         await conn.sendMessage(chatId, {
           text:
             `Could not parse.\n\n` +
-            `Use one of:\n` +
+            `Use:\n` +
             `  ${settings.prefix || '.'}lyrics <artist> - <title>\n` +
             `  ${settings.prefix || '.'}lyrics <artist> | <title>\n\n` +
             `${settings.footer}`
@@ -199,42 +214,78 @@ module.exports = {
         text: `Searching lyrics for "${parsed.title}" by ${parsed.artist}...`
       });
 
+      // ─────────────────────────────────────────
+      // Try exact match first
+      // ─────────────────────────────────────────
       let data = null;
       try {
         data = await fetchLyrics(parsed.artist, parsed.title);
       } catch (e) {
-        console.log('[LYRICS] Fetch failed:', e.message);
+        console.log('[LYRICS] Direct fetch failed:', e.message);
       }
 
-      // If exact match fails → suggest
+      // ─────────────────────────────────────────
+      // If no lyrics → try suggestions automatically
+      // ─────────────────────────────────────────
       if (!data || !data.lyrics) {
         try {
           const suggestions = await suggest(`${parsed.artist} ${parsed.title}`, 5);
 
           if (suggestions.length > 0) {
-            let text = `No exact match found.\n\nDid you mean:\n\n`;
-            suggestions.forEach((s, i) => {
-              text += `${i + 1}. ${s.artist?.name || 'Unknown'} - ${s.title}\n`;
-            });
-            text += `\nUsage: ${settings.prefix || '.'}lyrics <artist> - <title>\n\n`;
-            text += `${settings.footer}`;
+            // Try to fetch the first suggestion automatically
+            for (const sugg of suggestions) {
+              const suggArtist = sugg.artist?.name || parsed.artist;
+              const suggTitle = sugg.title;
 
-            await conn.sendMessage(chatId, { text });
+              if (!suggTitle) continue;
+
+              try {
+                const auto = await fetchLyrics(suggArtist, suggTitle);
+                if (auto && auto.lyrics) {
+                  data = auto;
+                  console.log('[LYRICS] Auto-matched to:', suggArtist, '-', suggTitle);
+                  break;
+                }
+              } catch (e) {
+                // try next
+              }
+            }
+          }
+
+          // If still nothing after auto-try, show the suggestion list
+          if (!data || !data.lyrics) {
+            if (suggestions.length > 0) {
+              let text = `No exact match found.\n\nDid you mean:\n\n`;
+              suggestions.forEach((s, i) => {
+                text += `${i + 1}. ${s.artist?.name || 'Unknown'} - ${s.title}\n`;
+              });
+              text += `\nTry: ${settings.prefix || '.'}lyrics <artist> - <title>\n\n`;
+              text += `${settings.footer}`;
+
+              await conn.sendMessage(chatId, { text });
+              return;
+            }
+
+            await conn.sendMessage(chatId, {
+              text: `No lyrics found for "${parsed.title}" by ${parsed.artist}.\n\n${settings.footer}`
+            });
             return;
           }
         } catch (e) {
           console.log('[LYRICS] Suggest failed:', e.message);
+          await conn.sendMessage(chatId, {
+            text: `No lyrics found.\n\n${settings.footer}`
+          });
+          return;
         }
-
-        await conn.sendMessage(chatId, {
-          text: `No lyrics found for "${parsed.title}" by ${parsed.artist}.\n\n${settings.footer}`
-        });
-        return;
       }
 
+      // ─────────────────────────────────────────
+      // Send lyrics
+      // ─────────────────────────────────────────
       let lyrics = (data.lyrics || '').replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
-      const header = `LYRICS\n\n${data.artist?.name || parsed.artist} - ${data.title || parsed.title}\n\n`;
 
+      const header = `LYRICS\n\n${data.artist?.name || parsed.artist} - ${data.title || parsed.title}\n\n`;
       const fullText = header + lyrics + `\n\n${settings.footer}`;
       const chunks = chunkAndSend(fullText, 4000);
 
@@ -242,6 +293,8 @@ module.exports = {
         await conn.sendMessage(chatId, { text: chunk });
         if (chunks.length > 1) await new Promise(r => setTimeout(r, 500));
       }
+
+      console.log('[LYRICS] Sent:', data.title || parsed.title);
 
     } catch (error) {
       console.log('[LYRICS] Error:', error.message);
