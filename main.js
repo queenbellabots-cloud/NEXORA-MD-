@@ -3,6 +3,7 @@
  * Simple MD-style owner check (paired number = owner)
  * Public/private mode + rate limit
  * Group watchers: anti-link, anti-bad, anti-left
+ * Auto-chatbot with GPT-4o
  */
 
 const settings = require('./settings');
@@ -104,7 +105,7 @@ ${settings.footer}`;
 }
 
 // ═══════════════════════════════════════════════════════
-// AUTO CHATBOT
+// AUTO CHATBOT (GPT-4o)
 // ═══════════════════════════════════════════════════════
 async function handleAutoChatBot(conn, mek) {
   try {
@@ -115,6 +116,7 @@ async function handleAutoChatBot(conn, mek) {
     const isStatus = chatId === 'status@broadcast';
     const isChannel = chatId.includes('@newsletter');
 
+    // DMs only
     if (isGroup || isStatus || isChannel) return;
     if (mek.key.fromMe) return;
 
@@ -123,28 +125,84 @@ async function handleAutoChatBot(conn, mek) {
     else if (mek.message.extendedTextMessage) text = mek.message.extendedTextMessage.text;
     else return;
 
-    if (!text || text.startsWith(settings.prefix)) return;
+    if (!text) return;
+
+    // Skip commands
+    if (text.startsWith(settings.prefix || '.')) return;
+
+    // Skip emoji-only
+    if (/^[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]+$/u.test(text.trim())) return;
 
     const sender = mek.key.participant || mek.key.remoteJid;
     const pushName = mek.pushName || 'User';
 
-    await conn.sendPresenceUpdate('composing', chatId);
+    // Show typing
+    try {
+      await conn.sendPresenceUpdate('composing', chatId);
+    } catch (e) {}
 
     try {
-      const response = await axios.post('https://apis.davidcyril.name.ng/ai/gemini-3-pro', {
-        message: text,
-        name: pushName
-      }, { headers: { 'Content-Type': 'application/json' }, timeout: 30000 });
+      const response = await axios.post(
+        'https://apis.davidcyril.name.ng/ai/gpt-4o',
+        {
+          message: text,
+          name: pushName
+        },
+        {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 45000
+        }
+      );
 
-      let reply = response.data?.reply || response.data?.response || response.data?.message || 'Sorry, I could not process that.';
+      let reply =
+        response.data?.reply ||
+        response.data?.response ||
+        response.data?.message ||
+        response.data?.result ||
+        response.data?.answer ||
+        response.data?.data ||
+        'Sorry, I could not process that.';
+
+      if (typeof reply !== 'string') {
+        reply = JSON.stringify(reply);
+      }
+
       reply = reply.replace(/\*\*/g, '*').trim();
 
-      await conn.sendMessage(chatId, {
-        text: `AI Response:\n\n${reply}\n\n${settings.footer}`
-      });
+      // Split if too long
+      const MAX_LEN = 4000;
+      if (reply.length > MAX_LEN) {
+        const chunks = [];
+        for (let i = 0; i < reply.length; i += MAX_LEN) {
+          chunks.push(reply.slice(i, i + MAX_LEN));
+        }
+        for (let i = 0; i < chunks.length; i++) {
+          const label = chunks.length > 1 ? `\n\n(Part ${i + 1}/${chunks.length})` : '';
+          await conn.sendMessage(chatId, {
+            text: chunks[i] + label
+          });
+          await new Promise(r => setTimeout(r, 500));
+        }
+      } else {
+        await conn.sendMessage(chatId, { text: reply });
+      }
+
+      console.log('[AUTOCHATBOT] Replied to', sender.split('@')[0]);
     } catch (error) {
-      logger.error(`Auto-Reply AI Error: ${error.message}`);
+      console.log('[AUTOCHATBOT] API error:', error.message);
+
+      let errMsg = 'AI service is unavailable. Try again later.';
+      if (error.response && error.response.status === 429) {
+        errMsg = 'AI service is busy. Try again in a moment.';
+      } else if (error.code === 'ECONNABORTED') {
+        errMsg = 'AI request timed out. Try again.';
+      }
+
+      try {
+        await conn.sendMessage(chatId, { text: errMsg });
+      } catch (e) {}
     }
+
   } catch (error) {
     logger.error(`Auto-ChatBot Error: ${error.message}`);
   }
@@ -176,7 +234,6 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
     // GROUP WATCHERS
     // ─────────────────────────────────────────
     if (chatId.endsWith('@g.us')) {
-      // Anti-link
       try {
         const { antiLinkWatcher } = require('./plugins/group/antilink');
         await antiLinkWatcher(conn, mek, chatId);
@@ -184,7 +241,6 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
         console.log('[ANTILINK] Hook error:', e.message);
       }
 
-      // Anti-bad
       try {
         const { antiBadWatcher } = require('./plugins/group/antibad');
         await antiBadWatcher(conn, mek, chatId);
@@ -205,9 +261,6 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
 
     const sender = mek.key.participant || mek.key.remoteJid;
 
-    // ─────────────────────────────────────────
-    // EMOJI-ONLY REPLY → SILENT REVEAL
-    // ─────────────────────────────────────────
     if (isEmojiCommand(rawCommand)) {
       const quoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
       if (quoted) {
@@ -222,21 +275,17 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
 
     const commandName = rawCommand.toLowerCase();
 
-    // Owner check
     const isBotOwner = owner.isOwner(sender, conn);
 
-    // Mode check
     const currentMode = mode.getMode(settings.mode || 'public');
     if (currentMode === 'private' && !isBotOwner) {
       return;
     }
 
-    // Rate limit
     if (!isBotOwner && !rateLimit.isAllowed(sender, settings.rateLimitPerMinute || 10)) {
       return;
     }
 
-    // Plugin dispatch
     if (global.commands && global.commands.has(commandName)) {
       const command = global.commands.get(commandName);
 
