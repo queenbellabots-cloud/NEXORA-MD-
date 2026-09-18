@@ -1,8 +1,5 @@
 /**
- * NEXORA MD - Catbox Uploader
- * Uploads replied media to catbox.moe
- * Usage:
- *   .catbox (reply to image/video/audio/document/sticker)
+ * NEXORA MD - Catbox Uploader (fixed)
  */
 
 const settings = require('../../settings');
@@ -10,9 +7,6 @@ const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
 const FormData = require('form-data');
 const axios = require('axios');
 
-// ─────────────────────────────────────────────
-// EXTRACT MEDIA FROM QUOTED MESSAGE
-// ─────────────────────────────────────────────
 function extractMedia(quoted) {
   if (!quoted) return null;
   let inner = quoted;
@@ -22,16 +16,34 @@ function extractMedia(quoted) {
   else if (quoted.viewOnceMessageV2Extension?.message) inner = quoted.viewOnceMessageV2Extension.message;
   else if (quoted.documentWithCaptionMessage?.message) inner = quoted.documentWithCaptionMessage.message;
 
-  if (inner.imageMessage) return { type: 'image', media: inner.imageMessage, mime: inner.imageMessage.mimetype || 'image/jpeg' };
-  if (inner.videoMessage) return { type: 'video', media: inner.videoMessage, mime: inner.videoMessage.mimetype || 'video/mp4' };
-  if (inner.audioMessage) return { type: 'audio', media: inner.audioMessage, mime: inner.audioMessage.mimetype || 'audio/mpeg' };
-  if (inner.documentMessage) return { type: 'document', media: inner.documentMessage, mime: inner.documentMessage.mimetype || 'application/octet-stream', fileName: inner.documentMessage.fileName };
-  if (inner.stickerMessage) return { type: 'sticker', media: inner.stickerMessage, mime: 'image/webp' };
+  // Sticker → treat as document-like (Baileys uses 'sticker' internally but downloadContentFromMessage accepts it via 'sticker' too)
+  if (inner.imageMessage) {
+    return { type: 'image', media: inner.imageMessage, mime: inner.imageMessage.mimetype || 'image/jpeg' };
+  }
+  if (inner.videoMessage) {
+    return { type: 'video', media: inner.videoMessage, mime: inner.videoMessage.mimetype || 'video/mp4' };
+  }
+  if (inner.audioMessage) {
+    return { type: 'audio', media: inner.audioMessage, mime: inner.audioMessage.mimetype || 'audio/mpeg' };
+  }
+  if (inner.documentMessage) {
+    return {
+      type: 'document',
+      media: inner.documentMessage,
+      mime: inner.documentMessage.mimetype || 'application/octet-stream',
+      fileName: inner.documentMessage.fileName
+    };
+  }
+  if (inner.stickerMessage) {
+    return { type: 'sticker', media: inner.stickerMessage, mime: 'image/webp' };
+  }
 
   return null;
 }
 
 async function downloadMedia(mediaInfo) {
+  // downloadContentFromMessage needs a "type" it recognises.
+  // 'sticker' maps to 'sticker', which Baileys understands.
   const stream = await downloadContentFromMessage(mediaInfo.media, mediaInfo.type);
   const chunks = [];
   for await (const chunk of stream) chunks.push(chunk);
@@ -44,28 +56,24 @@ function extFromMime(mime, fallback = 'bin') {
   return parts[1] ? parts[1].split(';')[0] : fallback;
 }
 
-// ─────────────────────────────────────────────
-// COMMAND
-// ─────────────────────────────────────────────
 module.exports = {
   name: 'catbox',
   aliases: ['cbox', 'upload'],
   category: 'general',
-  description: 'Upload media to catbox.moe and get a permanent link',
+  description: 'Upload media to catbox.moe',
   usage: '.catbox (reply to media)',
   react: '✅',
 
   async execute(conn, mek, args, chatId, isOwner) {
     try {
-      // ─────────────────────────────────────────
-      // 1. Get quoted media
-      // ─────────────────────────────────────────
+      // Get quoted
       const contextInfo =
         mek.message?.extendedTextMessage?.contextInfo ||
         mek.message?.imageMessage?.contextInfo ||
         mek.message?.videoMessage?.contextInfo ||
         mek.message?.audioMessage?.contextInfo ||
-        mek.message?.documentMessage?.contextInfo;
+        mek.message?.documentMessage?.contextInfo ||
+        mek.message?.stickerMessage?.contextInfo;
 
       const quoted = contextInfo?.quotedMessage;
 
@@ -89,14 +97,11 @@ module.exports = {
         return;
       }
 
-      // ─────────────────────────────────────────
-      // 2. React
-      // ─────────────────────────────────────────
+      console.log('[CATBOX] Media type:', mediaInfo.type, '| mime:', mediaInfo.mime);
+
       await conn.sendMessage(chatId, { react: { text: '⏳', key: mek.key } });
 
-      // ─────────────────────────────────────────
-      // 3. Download media
-      // ─────────────────────────────────────────
+      // Download
       let buffer = null;
       try {
         buffer = await downloadMedia(mediaInfo);
@@ -107,49 +112,64 @@ module.exports = {
       if (!buffer || buffer.length === 0) {
         await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
         await conn.sendMessage(chatId, {
-          text: `Failed to download media.\n\n${settings.footer}`
+          text: `Failed to download media (empty buffer).\n\n${settings.footer}`
         });
         return;
       }
 
-      // ─────────────────────────────────────────
-      // 4. Upload to catbox
-      // ─────────────────────────────────────────
-      const ext = extFromMime(mediaInfo.mime);
+      console.log('[CATBOX] Buffer size:', buffer.length, 'bytes');
+
+      // Build filename
+      const ext = extFromMime(mediaInfo.mime, mediaInfo.type === 'sticker' ? 'webp' : 'bin');
       const fileName = mediaInfo.fileName || `nexora_${Date.now()}.${ext}`;
 
+      // Upload to catbox
       const form = new FormData();
       form.append('reqtype', 'fileupload');
       form.append('fileToUpload', buffer, { filename: fileName });
 
       let uploadUrl = null;
+      let apiResponse = '';
+
       try {
         const res = await axios.post('https://catbox.moe/user/api.php', form, {
-          headers: form.getHeaders(),
-          timeout: 90000,
+          headers: {
+            ...form.getHeaders(),
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': '*/*'
+          },
+          timeout: 120000,
           maxBodyLength: Infinity,
           maxContentLength: Infinity
         });
 
-        uploadUrl = (res.data || '').trim();
+        apiResponse = (res.data || '').toString().trim();
+        console.log('[CATBOX] API response:', apiResponse);
+
+        if (apiResponse.startsWith('https://')) {
+          uploadUrl = apiResponse;
+        }
       } catch (upErr) {
-        console.log('[CATBOX] Upload failed:', upErr.message);
+        console.log('[CATBOX] Upload error:', upErr.message);
+        if (upErr.response) {
+          console.log('[CATBOX] Status:', upErr.response.status);
+          console.log('[CATBOX] Body:', (upErr.response.data || '').toString().slice(0, 200));
+        }
       }
 
-      if (!uploadUrl || !uploadUrl.startsWith('https://')) {
+      if (!uploadUrl) {
         await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
         await conn.sendMessage(chatId, {
           text:
-            `Upload failed.\n\n` +
-            `Response: ${uploadUrl || 'empty'}\n\n` +
+            `Catbox upload failed.\n\n` +
+            `Response: ${apiResponse || '(empty)'}\n` +
+            `Size sent: ${(buffer.length / 1024).toFixed(2)} KB\n\n` +
+            `Catbox is often down or rate-limited. Try again in a minute.\n\n` +
             `${settings.footer}`
         });
         return;
       }
 
-      // ─────────────────────────────────────────
-      // 5. Send result
-      // ─────────────────────────────────────────
       await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
       await conn.sendMessage(chatId, {
         text:
@@ -160,7 +180,7 @@ module.exports = {
           `${settings.footer}`
       }, { quoted: mek });
 
-      console.log('[CATBOX] Uploaded:', uploadUrl);
+      console.log('[CATBOX] Success:', uploadUrl);
     } catch (error) {
       console.log('[CATBOX] Error:', error.message);
       try { await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } }); } catch (e) {}
