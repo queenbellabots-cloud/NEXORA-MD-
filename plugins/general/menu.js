@@ -142,7 +142,7 @@ function render1(info, categories, total, prefix) {
     for (const cmd of categories[cat].sort()) {
       t += `╠ ${prefix}${cmd}\n`;
     }
-    t += `╚═══════════════════╝\n`;
+    t += `╚═══════════════╝\n`;
   }
   t += `\n${settings.footer}`;
   return t;
