@@ -122,27 +122,27 @@ function infoLines(pushName) {
 
 // THEME 1 - Classic Box
 function render1(info, categories, total, prefix) {
-  let t = `╭━━━━━━━━━━━━━━━━━━━━━━━━╮\n`;
-  t += `┃  ${info.botName}\n`;
-  t += `┃  Powered by Rodgers\n`;
-  t += `╰━━━━━━━━━━━━━━━━━━━━━━━━╯\n\n`;
-  t += `┃ Owner: ${info.owner}\n`;
-  t += `┃ Prefix: ${prefix}\n`;
-  t += `┃ User: ${info.user}\n`;
-  t += `┃ Mode: ${info.mode}\n`;
-  t += `┃ Uptime: ${info.uptime}\n`;
-  t += `┃ RAM: ${info.ram} MB\n`;
-  t += `┃ Platform: ${info.platform}\n`;
-  t += `┃ Node: ${info.node}\n`;
-  t += `┃ Commands: ${total}\n`;
-  t += `┃ Time: ${info.time}\n`;
+  let t = `╔═══════════════════╗\n`;
+  t += `╠  ${info.botName}\n`;
+  t += `╠  𝙿𝚘𝚠𝚎𝚛𝚎𝚍 𝚋𝚢 𝚁𝚘𝚍𝚐𝚎𝚛𝚜\n`;
+  t += `╚════════════════════╝\n\n`;
+  t += `╠ Owner: ${info.owner}\n`;
+  t += `╠ Prefix: ${prefix}\n`;
+  t += `╠ User: ${info.user}\n`;
+  t += `╠ Mode: ${info.mode}\n`;
+  t += `╠ Uptime: ${info.uptime}\n`;
+  t += `╠ RAM: ${info.ram} MB\n`;
+  t += `╠ Platform: ${info.platform}\n`;
+  t += `╠ Node: ${info.node}\n`;
+  t += `╠ Commands: ${total}\n`;
+  t += `╠ Time: ${info.time}\n`;
 
   for (const cat of Object.keys(categories).sort()) {
-    t += `\n╭━━ [ ${cat} ] ━━╮\n`;
+    t += `\n╔═══ [ ${cat} ] ═══╗\n`;
     for (const cmd of categories[cat].sort()) {
-      t += `┃ ${prefix}${cmd}\n`;
+      t += `╠ ${prefix}${cmd}\n`;
     }
-    t += `╰━━━━━━━━━━━━━━━━━━━━━━╯\n`;
+    t += `╚═══════════════════╝\n`;
   }
   t += `\n${settings.footer}`;
   return t;
@@ -152,6 +152,7 @@ function render1(info, categories, total, prefix) {
 function render2(info, categories, total, prefix) {
   let t = `══════════════════════════\n`;
   t += `     ${info.botName}\n`;
+  t += `     𝙿𝚘𝚠𝚎𝚛𝚎𝚍 𝚋𝚢 𝚁𝚘𝚍𝚐𝚎𝚛𝚜\𝚗`;
   t += `══════════════════════════\n\n`;
   t += `Owner      : ${info.owner}\n`;
   t += `Prefix     : ${prefix}\n`;
