@@ -187,8 +187,19 @@ try {
   };
 }
 
+// Ghost mode
+try {
+  if (fs.existsSync('./data/ghost.json')) {
+    const gData = JSON.parse(fs.readFileSync('./data/ghost.json', 'utf8'));
+    global.ghostMode = gData.enabled === true;
+  } else {
+    global.ghostMode = settings.ghostMode || false;
+  }
+} catch (e) {
+  global.ghostMode = settings.ghostMode || false;
+}
+
 global.customStatus = 'composing';
-global.ghostMode = settings.ghostMode;
 global.antiCall = settings.antiCall;
 
 // ═══════════════════════════════════════════════════════
@@ -855,6 +866,16 @@ RECOVERED MESSAGE:`;
             await Nexora.sendPresenceUpdate('available');
           }
         } catch (e) {}
+
+        // ─── GHOST MODE (apply privacy on boot) ───
+        try {
+          if (global.ghostMode) {
+            await Nexora.updateReadReceiptsPrivacy('none');
+            logger.success('Ghost mode applied (read receipts off)');
+          }
+        } catch (e) {
+          console.log('[GHOST] Apply failed:', e.message);
+        }
 
         // ─── AUTO-BIO TIMER ───
         try {
