@@ -1,10 +1,3 @@
-/**
- * NEXORA MD - Settings
- * Just edit these 2 lines:
- *   1. ownerNumber - your WhatsApp number
- *   2. botOwner    - your name
- */
-
 const settings = {
 
   // ═══════════════════════════════════════════════
