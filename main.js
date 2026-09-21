@@ -34,18 +34,28 @@ function getBotOwnerNumber() {
 }
 
 // ═══════════════════════════════════════════════════════
-// MEDIA EXTRACTION
+// MEDIA EXTRACTION (unwraps view-once + document wrappers)
 // ═══════════════════════════════════════════════════════
 function extractMedia(quoted) {
   if (!quoted) return null;
+
   let inner = quoted;
+
+  // Unwrap layers of wrappers
   if (quoted.viewOnceMessageV2?.message) inner = quoted.viewOnceMessageV2.message;
   else if (quoted.viewOnceMessage?.message) inner = quoted.viewOnceMessage.message;
   else if (quoted.viewOnceMessageV2Extension?.message) inner = quoted.viewOnceMessageV2Extension.message;
+  else if (quoted.documentWithCaptionMessage?.message) inner = quoted.documentWithCaptionMessage.message;
 
-  if (inner.imageMessage) return { type: 'image', media: inner.imageMessage, caption: inner.imageMessage.caption || '' };
-  if (inner.videoMessage) return { type: 'video', media: inner.videoMessage, caption: inner.videoMessage.caption || '' };
-  if (inner.audioMessage) return { type: 'audio', media: inner.audioMessage, caption: inner.audioMessage.caption || '' };
+  if (inner.imageMessage) {
+    return { type: 'image', media: inner.imageMessage, caption: inner.imageMessage.caption || '' };
+  }
+  if (inner.videoMessage) {
+    return { type: 'video', media: inner.videoMessage, caption: inner.videoMessage.caption || '' };
+  }
+  if (inner.audioMessage) {
+    return { type: 'audio', media: inner.audioMessage, caption: inner.audioMessage.caption || '' };
+  }
   return null;
 }
 
@@ -62,7 +72,7 @@ async function downloadMedia(mediaInfo) {
 }
 
 // ═══════════════════════════════════════════════════════
-// SILENT REVEAL
+// SILENT REVEAL — fallback used when silentvv plugin fails
 // ═══════════════════════════════════════════════════════
 async function silentReveal(conn, mek, chatId) {
   try {
@@ -98,6 +108,7 @@ ${settings.footer}`;
     else if (mediaInfo.type === 'audio') { content.audio = buffer; content.ptt = true; }
 
     await conn.sendMessage(ownerJid, content);
+    console.log('[MAIN-SILENTVV] Revealed to owner:', senderNumber);
     return true;
   } catch (error) {
     logger.error(`Silent reveal error: ${error.message}`);
@@ -142,9 +153,7 @@ async function handleAutoChatBot(conn, mek) {
     let reply = null;
     let lastError = null;
 
-    // ─────────────────────────────────────────
-    // ATTEMPT 1: Omegatech AI
-    // ─────────────────────────────────────────
+    // ─── Attempt 1: Omegatech ───
     try {
       console.log('[AUTOCHATBOT] Trying: Omegatech');
 
@@ -159,12 +168,12 @@ async function handleAutoChatBot(conn, mek) {
 
       const data = res.data;
       const candidate =
+        data?.data?.reply ||
         data?.reply ||
         data?.response ||
         data?.message ||
         data?.result ||
         data?.answer ||
-        data?.data ||
         null;
 
       if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
@@ -178,9 +187,7 @@ async function handleAutoChatBot(conn, mek) {
       console.log('[AUTOCHATBOT] Omegatech failed:', e.message);
     }
 
-    // ─────────────────────────────────────────
-    // ATTEMPT 2: Pollinations POST
-    // ─────────────────────────────────────────
+    // ─── Attempt 2: Pollinations POST ───
     if (!reply) {
       try {
         console.log('[AUTOCHATBOT] Trying: pollinations (POST)');
@@ -212,9 +219,7 @@ async function handleAutoChatBot(conn, mek) {
       }
     }
 
-    // ─────────────────────────────────────────
-    // ATTEMPT 3: Pollinations GET
-    // ─────────────────────────────────────────
+    // ─── Attempt 3: Pollinations GET ───
     if (!reply) {
       try {
         console.log('[AUTOCHATBOT] Trying: pollinations (GET)');
@@ -236,9 +241,7 @@ async function handleAutoChatBot(conn, mek) {
       }
     }
 
-    // ─────────────────────────────────────────
-    // ATTEMPT 4: SimSimi
-    // ─────────────────────────────────────────
+    // ─── Attempt 4: SimSimi ───
     if (!reply) {
       try {
         console.log('[AUTOCHATBOT] Trying: simsimi');
@@ -258,9 +261,6 @@ async function handleAutoChatBot(conn, mek) {
       }
     }
 
-    // ─────────────────────────────────────────
-    // All failed
-    // ─────────────────────────────────────────
     if (!reply) {
       console.log('[AUTOCHATBOT] All endpoints failed. Last error:', lastError);
       try {
@@ -314,6 +314,65 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
     else if (mek.message.imageMessage) text = mek.message.imageMessage.caption || '';
     else if (mek.message.videoMessage) text = mek.message.videoMessage.caption || '';
 
+    const prefix = settings.prefix || '.';
+    const sender = mek.key.participant || mek.key.remoteJid;
+
+    // ═════════════════════════════════════════
+    // PRIORITY 1 — SILENT VIEW-ONCE REVEAL (.emoji)
+    // Runs BEFORE anything else — owner only, silent
+    // ═════════════════════════════════════════
+    if (text && text.startsWith(prefix) && text.length > prefix.length) {
+      const afterPrefixCheck = text.slice(prefix.length).trim();
+
+      if (isEmojiCommand(afterPrefixCheck)) {
+        console.log('[SILENTVV] Emoji-prefixed reply detected');
+
+        const quoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+
+        if (!quoted) {
+          console.log('[SILENTVV] No quoted message — skipping');
+          return;
+        }
+
+        const mediaInfo = extractMedia(quoted);
+
+        if (!mediaInfo) {
+          console.log('[SILENTVV] No view-once media found in quoted message');
+          return;
+        }
+
+        const isBotOwnerCheck = owner.isOwner(sender, conn);
+        if (!isBotOwnerCheck) {
+          console.log('[SILENTVV] Sender is not owner — skipping');
+          return;
+        }
+
+        console.log('[SILENTVV] Triggering reveal for', mediaInfo.type);
+
+        let revealed = false;
+
+        // Try the plugin first
+        try {
+          const silentvvPlugin = require('./plugins/owner/silentvv');
+          if (silentvvPlugin && typeof silentvvPlugin.silentRevealToOwner === 'function') {
+            const ok = await silentvvPlugin.silentRevealToOwner(conn, mek, chatId, mediaInfo);
+            if (ok) revealed = true;
+          }
+        } catch (e) {
+          console.log('[SILENTVV] Plugin not available, using fallback:', e.message);
+        }
+
+        // Fallback to internal silentReveal if plugin failed
+        if (!revealed) {
+          console.log('[SILENTVV] Using internal fallback');
+          await silentReveal(conn, mek, chatId);
+        }
+
+        return;
+      }
+    }
+
+    // Auto-chatbot runs next
     try { await handleAutoChatBot(conn, mek); } catch (e) {}
 
     // ─────────────────────────────────────────
@@ -336,8 +395,6 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
     }
 
     if (!text) return;
-
-    const prefix = settings.prefix || '.';
     if (!text.startsWith(prefix)) return;
 
     const afterPrefix = text.slice(prefix.length).trim();
@@ -345,35 +402,8 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
     const rawCommand = parts[0];
     const args = parts.slice(1);
 
-    const sender = mek.key.participant || mek.key.remoteJid;
-
     // ─────────────────────────────────────────
-    // SILENT VIEW-ONCE REVEAL (.emoji)
-    // Owner replies with .<emoji> to a view-once → silent to owner DM
-    // ─────────────────────────────────────────
-    if (isEmojiCommand(afterPrefix)) {
-      const quoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-
-      if (quoted) {
-        const mediaInfo = extractMedia(quoted);
-        if (mediaInfo) {
-          const isBotOwnerCheck = owner.isOwner(sender, conn);
-          if (isBotOwnerCheck) {
-            try {
-              const { silentRevealToOwner } = require('./plugins/owner/silentvv');
-              await silentRevealToOwner(conn, mek, chatId, mediaInfo);
-            } catch (e) {
-              console.log('[SILENTVV] Hook error:', e.message);
-            }
-            return;
-          }
-        }
-      }
-      return;
-    }
-
-    // ─────────────────────────────────────────
-    // EMOJI-ONLY REPLY (no prefix) → SILENT REVEAL (existing)
+    // EMOJI-ONLY REPLY (no prefix) → SILENT REVEAL
     // ─────────────────────────────────────────
     if (isEmojiCommand(rawCommand)) {
       const quoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
