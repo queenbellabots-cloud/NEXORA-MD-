@@ -4,7 +4,7 @@
  * Public/private mode + rate limit
  * Group watchers: anti-link, anti-bad, anti-left
  * Auto-chatbot: Omegatech AI (with session memory + fallback)
- * Silent view-once reveal: owner replies with .<emoji>
+ * Silent view-once reveal: owner replies with .<emoji> (single send)
  */
 
 const settings = require('./settings');
@@ -41,21 +41,14 @@ function extractMedia(quoted) {
 
   let inner = quoted;
 
-  // Unwrap layers of wrappers
   if (quoted.viewOnceMessageV2?.message) inner = quoted.viewOnceMessageV2.message;
   else if (quoted.viewOnceMessage?.message) inner = quoted.viewOnceMessage.message;
   else if (quoted.viewOnceMessageV2Extension?.message) inner = quoted.viewOnceMessageV2Extension.message;
   else if (quoted.documentWithCaptionMessage?.message) inner = quoted.documentWithCaptionMessage.message;
 
-  if (inner.imageMessage) {
-    return { type: 'image', media: inner.imageMessage, caption: inner.imageMessage.caption || '' };
-  }
-  if (inner.videoMessage) {
-    return { type: 'video', media: inner.videoMessage, caption: inner.videoMessage.caption || '' };
-  }
-  if (inner.audioMessage) {
-    return { type: 'audio', media: inner.audioMessage, caption: inner.audioMessage.caption || '' };
-  }
+  if (inner.imageMessage) return { type: 'image', media: inner.imageMessage, caption: inner.imageMessage.caption || '' };
+  if (inner.videoMessage) return { type: 'video', media: inner.videoMessage, caption: inner.videoMessage.caption || '' };
+  if (inner.audioMessage) return { type: 'audio', media: inner.audioMessage, caption: inner.audioMessage.caption || '' };
   return null;
 }
 
@@ -72,7 +65,7 @@ async function downloadMedia(mediaInfo) {
 }
 
 // ═══════════════════════════════════════════════════════
-// SILENT REVEAL — fallback used when silentvv plugin fails
+// SILENT REVEAL — internal fallback only
 // ═══════════════════════════════════════════════════════
 async function silentReveal(conn, mek, chatId) {
   try {
@@ -108,7 +101,7 @@ ${settings.footer}`;
     else if (mediaInfo.type === 'audio') { content.audio = buffer; content.ptt = true; }
 
     await conn.sendMessage(ownerJid, content);
-    console.log('[MAIN-SILENTVV] Revealed to owner:', senderNumber);
+    console.log('[MAIN-SILENTVV] Revealed to owner (fallback):', senderNumber);
     return true;
   } catch (error) {
     logger.error(`Silent reveal error: ${error.message}`);
@@ -349,22 +342,22 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
 
         console.log('[SILENTVV] Triggering reveal for', mediaInfo.type);
 
+        // Try the plugin first — TRUST its return value
         let revealed = false;
-
-        // Try the plugin first
         try {
           const silentvvPlugin = require('./plugins/owner/silentvv');
           if (silentvvPlugin && typeof silentvvPlugin.silentRevealToOwner === 'function') {
-            const ok = await silentvvPlugin.silentRevealToOwner(conn, mek, chatId, mediaInfo);
-            if (ok) revealed = true;
+            revealed = await silentvvPlugin.silentRevealToOwner(conn, mek, chatId, mediaInfo);
+            console.log('[SILENTVV] Plugin returned:', revealed);
           }
         } catch (e) {
-          console.log('[SILENTVV] Plugin not available, using fallback:', e.message);
+          console.log('[SILENTVV] Plugin failed:', e.message);
+          revealed = false;
         }
 
-        // Fallback to internal silentReveal if plugin failed
+        // Fallback ONLY if plugin failed
         if (!revealed) {
-          console.log('[SILENTVV] Using internal fallback');
+          console.log('[SILENTVV] Plugin failed — using internal fallback');
           await silentReveal(conn, mek, chatId);
         }
 
