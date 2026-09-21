@@ -762,7 +762,7 @@ RECOVERED MESSAGE:`;
     });
 
     // ─────────────────────────────────────────
-    // ANTI-CALL (polite warning, no block)
+    // ANTI-CALL (reject + polite warning)
     // ─────────────────────────────────────────
     Nexora.ev.on('call', async (calls) => {
       try {
@@ -780,6 +780,29 @@ RECOVERED MESSAGE:`;
           if (!call.from) continue;
 
           const callerNum = String(call.from).split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+
+          // ─── REJECT THE CALL IMMEDIATELY ───
+          try {
+            if (typeof Nexora.rejectCall === 'function' && call.id) {
+              // Try 2-arg signature first (newer Baileys)
+              try {
+                await Nexora.rejectCall(call.id, call.from);
+                console.log('[ANTICALL] Call rejected (2-arg):', callerNum);
+              } catch (e1) {
+                // Fallback to 1-arg signature
+                try {
+                  await Nexora.rejectCall(call.id);
+                  console.log('[ANTICALL] Call rejected (1-arg):', callerNum);
+                } catch (e2) {
+                  console.log('[ANTICALL] rejectCall failed:', e2.message);
+                }
+              }
+            } else {
+              console.log('[ANTICALL] rejectCall not available on this Baileys version');
+            }
+          } catch (rejectErr) {
+            console.log('[ANTICALL] Reject error:', rejectErr.message);
+          }
 
           // If in callblock list → block silently
           if (blockedList.some(b => b.number === callerNum)) {
@@ -802,13 +825,6 @@ RECOVERED MESSAGE:`;
           } catch (e) {
             console.log('[ANTICALL] Message failed:', e.message);
           }
-
-          // Try to reject the call (if Baileys supports it)
-          try {
-            if (typeof Nexora.rejectCall === 'function' && call.id) {
-              await Nexora.rejectCall(call.id, call.from);
-            }
-          } catch (e) {}
 
           // Log the call
           try {
