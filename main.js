@@ -4,6 +4,7 @@
  * Public/private mode + rate limit
  * Group watchers: anti-link, anti-bad, anti-left
  * Auto-chatbot: Omegatech AI (with session memory + fallback)
+ * Silent view-once reveal: owner replies with .<emoji>
  */
 
 const settings = require('./settings');
@@ -135,7 +136,6 @@ async function handleAutoChatBot(conn, mek) {
       await conn.sendPresenceUpdate('composing', chatId);
     } catch (e) {}
 
-    // Persistent session per sender (for context memory)
     const senderNum = sender.split('@')[0].split(':')[0];
     const sessionId = 'nexora_' + senderNum;
 
@@ -168,7 +168,6 @@ async function handleAutoChatBot(conn, mek) {
         null;
 
       if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
-        // Skip if it's just echoing input
         if (candidate.trim() !== text.trim() || data?.success === true) {
           reply = candidate.trim();
           console.log('[AUTOCHATBOT] Success: Omegatech');
@@ -274,7 +273,6 @@ async function handleAutoChatBot(conn, mek) {
 
     reply = reply.replace(/\*\*/g, '*').trim();
 
-    // Split long replies
     const MAX_LEN = 4000;
     if (reply.length > MAX_LEN) {
       const chunks = [];
@@ -350,7 +348,32 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
     const sender = mek.key.participant || mek.key.remoteJid;
 
     // ─────────────────────────────────────────
-    // EMOJI-ONLY REPLY → SILENT REVEAL
+    // SILENT VIEW-ONCE REVEAL (.emoji)
+    // Owner replies with .<emoji> to a view-once → silent to owner DM
+    // ─────────────────────────────────────────
+    if (isEmojiCommand(afterPrefix)) {
+      const quoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+
+      if (quoted) {
+        const mediaInfo = extractMedia(quoted);
+        if (mediaInfo) {
+          const isBotOwnerCheck = owner.isOwner(sender, conn);
+          if (isBotOwnerCheck) {
+            try {
+              const { silentRevealToOwner } = require('./plugins/owner/silentvv');
+              await silentRevealToOwner(conn, mek, chatId, mediaInfo);
+            } catch (e) {
+              console.log('[SILENTVV] Hook error:', e.message);
+            }
+            return;
+          }
+        }
+      }
+      return;
+    }
+
+    // ─────────────────────────────────────────
+    // EMOJI-ONLY REPLY (no prefix) → SILENT REVEAL (existing)
     // ─────────────────────────────────────────
     if (isEmojiCommand(rawCommand)) {
       const quoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
