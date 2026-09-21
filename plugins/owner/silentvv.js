@@ -40,57 +40,23 @@ function cleanNum(s) {
   return String(s || '').split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
 }
 
-function isEmojiText(text) {
-  if (!text) return false;
-  const emojiRegex = /^[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{200D}]+$/u;
-  return emojiRegex.test(text);
-}
-
-module.exports = {
-  name: 'silentvv',
-  aliases: ['svv', 'silent'],
-  category: 'owner',
-  description: 'Silently reveal a view-once to owner DM',
-  usage: 'Reply to a view-once with .<emoji>',
-  ownerOnly: true,
-  react: '✅',
-
-  // This plugin is actually handled by main.js, but registered here so it
-  // appears in the menu
-  async execute(conn, mek, args, chatId, isOwner) {
-    // Placeholder — actual logic is in the watcher below
-    try {
-      const quoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-
-      if (!quoted) {
-        await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
-        return;
-      }
-
-      const mediaInfo = extractViewOnce(quoted);
-      if (!mediaInfo) {
-        await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
-        return;
-      }
-
-      // Silent — no reaction, no reply. Owner check happens in main.js
-      await silentRevealToOwner(conn, mek, chatId, mediaInfo);
-    } catch (error) {
-      console.log('[SILENTVV] Error:', error.message);
-    }
-  }
-};
-
 // ═══════════════════════════════════════════════════════
 // SILENT REVEAL — sends media to owner DM, no trace
 // ═══════════════════════════════════════════════════════
 async function silentRevealToOwner(conn, mek, chatId, mediaInfo) {
   try {
+    // Download with timeout protection
     const buffer = await downloadMedia(mediaInfo);
-    if (!buffer || buffer.length === 0) return false;
+    if (!buffer || buffer.length === 0) {
+      console.log('[SILENTVV] Empty buffer — aborting');
+      return false;
+    }
 
     const ownerNum = (owner.getPairedNumber && owner.getPairedNumber()) || settings.ownerNumber;
-    if (!ownerNum) return false;
+    if (!ownerNum) {
+      console.log('[SILENTVV] No owner number found');
+      return false;
+    }
 
     const ownerJid = ownerNum.includes('@') ? ownerNum : ownerNum + '@s.whatsapp.net';
 
@@ -119,4 +85,37 @@ async function silentRevealToOwner(conn, mek, chatId, mediaInfo) {
   }
 }
 
-module.exports.silentRevealToOwner = silentRevealToOwner;
+module.exports = {
+  name: 'silentvv',
+  aliases: ['svv', 'silent'],
+  category: 'owner',
+  description: 'Silently reveal a view-once to owner DM',
+  usage: 'Reply to a view-once with .<emoji>',
+  ownerOnly: true,
+  react: '✅',
+
+  // This plugin is handled by main.js — this function is the fallback
+  async execute(conn, mek, args, chatId, isOwner) {
+    try {
+      const quoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+
+      if (!quoted) {
+        await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
+        return;
+      }
+
+      const mediaInfo = extractViewOnce(quoted);
+      if (!mediaInfo) {
+        await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
+        return;
+      }
+
+      // Silent — no reaction, no reply
+      await silentRevealToOwner(conn, mek, chatId, mediaInfo);
+    } catch (error) {
+      console.log('[SILENTVV] Error:', error.message);
+    }
+  },
+
+  silentRevealToOwner
+};
