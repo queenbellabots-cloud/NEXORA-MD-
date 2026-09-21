@@ -199,8 +199,19 @@ try {
   global.ghostMode = settings.ghostMode || false;
 }
 
+// Anti-call
+try {
+  if (fs.existsSync('./data/anticall.json')) {
+    const acData = JSON.parse(fs.readFileSync('./data/anticall.json', 'utf8'));
+    global.antiCall = acData.enabled !== false;
+  } else {
+    global.antiCall = settings.antiCall;
+  }
+} catch (e) {
+  global.antiCall = settings.antiCall;
+}
+
 global.customStatus = 'composing';
-global.antiCall = settings.antiCall;
 
 // ═══════════════════════════════════════════════════════
 // IMAGE FETCH HELPER
@@ -751,24 +762,92 @@ RECOVERED MESSAGE:`;
     });
 
     // ─────────────────────────────────────────
-    // ANTI-CALL
+    // ANTI-CALL (polite warning, no block)
     // ─────────────────────────────────────────
     Nexora.ev.on('call', async (calls) => {
       try {
         if (!global.antiCall) return;
 
+        // Load call-blocked list
+        let blockedList = [];
+        try {
+          if (fs.existsSync('./data/callblocked.json')) {
+            blockedList = JSON.parse(fs.readFileSync('./data/callblocked.json', 'utf8'));
+          }
+        } catch (e) {}
+
         for (const call of calls) {
           if (!call.from) continue;
 
-          const callMessages = loadCallMessages();
-          const userMsg = callMessages[call.from] || 'Call rejected. Please message instead.';
+          const callerNum = String(call.from).split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
+
+          // If in callblock list → block silently
+          if (blockedList.some(b => b.number === callerNum)) {
+            try {
+              await Nexora.updateBlockStatus(call.from, 'block');
+              console.log('[ANTICALL] Blocked (callblock list):', callerNum);
+            } catch (e) {}
+            continue;
+          }
+
+          // Polite warning message
+          const politeMsg =
+            `Hi. This number is a WhatsApp bot and cannot receive voice or video calls.\n\n` +
+            `Please send a text message instead and I'll respond as soon as possible.\n\n` +
+            `Thank you for understanding.`;
 
           try {
-            await Nexora.sendMessage(call.from, { text: userMsg });
+            await Nexora.sendMessage(call.from, { text: politeMsg });
+            console.log('[ANTICALL] Polite warning sent to:', callerNum);
+          } catch (e) {
+            console.log('[ANTICALL] Message failed:', e.message);
+          }
+
+          // Try to reject the call (if Baileys supports it)
+          try {
+            if (typeof Nexora.rejectCall === 'function' && call.id) {
+              await Nexora.rejectCall(call.id, call.from);
+            }
           } catch (e) {}
 
+          // Log the call
           try {
-            await Nexora.updateBlockStatus(call.from, 'block');
+            const logPath = './data/call_log.json';
+            let log = [];
+            if (fs.existsSync(logPath)) {
+              log = JSON.parse(fs.readFileSync(logPath, 'utf8'));
+            }
+
+            let callerName = 'Unknown';
+            try {
+              callerName = await Nexora.getName(call.from) || 'Unknown';
+            } catch (e) {}
+
+            log.push({
+              number: callerNum,
+              name: callerName,
+              time: new Date().toLocaleString(),
+              action: 'rejected-warned'
+            });
+
+            if (log.length > 500) log = log.slice(-500);
+            fs.writeFileSync(logPath, JSON.stringify(log, null, 2));
+          } catch (e) {}
+
+          // Notify owner
+          try {
+            const ownerNum = (owner.getPairedNumber && owner.getPairedNumber()) || settings.ownerNumber;
+            if (ownerNum) {
+              const ownerJid = ownerNum.includes('@') ? ownerNum : ownerNum + '@s.whatsapp.net';
+              await Nexora.sendMessage(ownerJid, {
+                text:
+                  `CALL REJECTED\n\n` +
+                  `Number: ${callerNum}\n` +
+                  `Time: ${new Date().toLocaleString()}\n\n` +
+                  `Polite warning sent. Not blocked.\n\n` +
+                  `${settings.footer}`
+              });
+            }
           } catch (e) {}
         }
       } catch (error) {
