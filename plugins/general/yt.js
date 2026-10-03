@@ -1,22 +1,19 @@
 /**
- * NEXORA MD - YouTube Downloader
- * Downloads video or audio from YouTube
- * Uses multiple public APIs with fallback
+ * NEXORA MD - YouTube Play / Download
+ * Accepts either a song name OR a YouTube URL
  * Usage:
- *   .yt <url>              → video (default)
- *   .yt mp3 <url>          → audio (MP3)
- *   .yt mp4 <url>          → video (MP4)
+ *   .yt <song name>          → search + download audio
+ *   .yt <youtube url>        → download that video's audio
  */
 
 const settings = require('../../settings');
 const axios = require('axios');
 
 // ─────────────────────────────────────────────
-// HELPERS
+// URL DETECTION
 // ─────────────────────────────────────────────
-function isYouTubeUrl(url) {
-  if (!url) return false;
-  return /(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)/i.test(url);
+function isYouTubeUrl(text) {
+  return /(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)/i.test(text);
 }
 
 function extractVideoId(url) {
@@ -29,247 +26,160 @@ function extractVideoId(url) {
   return null;
 }
 
-// ─────────────────────────────────────────────
-// API: cobalt.tools — most reliable fallback
-// ─────────────────────────────────────────────
-async function cobaltDownload(url, isAudio) {
-  const endpoints = [
-    'https://api.cobalt.tools/api/json',
-    'https://co.wuk.sh/api/json'
-  ];
-
-  for (const endpoint of endpoints) {
-    try {
-      const res = await axios.post(endpoint, {
-        url,
-        isAudioOnly: isAudio,
-        aFormat: 'mp3',
-        vQuality: '720',
-        filenamePattern: 'basic'
-      }, {
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
-        timeout: 40000
-      });
-
-      if (res.data && res.data.url) {
-        return {
-          url: res.data.url,
-          title: res.data.filename || 'YouTube Media'
-        };
-      }
-    } catch (e) {
-      console.log('[YT] cobalt failed:', endpoint, '-', e.message);
-    }
-  }
-  return null;
-}
-
-// ─────────────────────────────────────────────
-// API: azbry fallback
-// ─────────────────────────────────────────────
-async function azbryDownload(url, isAudio) {
-  try {
-    const type = isAudio ? 'ytmp3' : 'ytmp4';
-    const apiUrl = `https://api.azbry.com/api/download/${type}?url=${encodeURIComponent(url)}`;
-    const res = await axios.get(apiUrl, { timeout: 30000 });
-
-    if (res.data?.status && res.data?.result) {
-      const r = res.data.result;
-      const downloadUrl = r.download || r.url || r.video || r.mp4 || r.audio;
-      if (downloadUrl) {
-        return {
-          url: downloadUrl,
-          title: r.title || 'YouTube Media'
-        };
-      }
-    }
-  } catch (e) {
-    console.log('[YT] azbry failed:', e.message);
-  }
-  return null;
-}
-
-// ─────────────────────────────────────────────
-// API: y2mate-style fallback
-// ─────────────────────────────────────────────
-async function y2mateDownload(url, isAudio) {
-  try {
-    const apiUrl = isAudio
-      ? `https://api.azbry.com/api/download/ytdl?url=${encodeURIComponent(url)}&type=audio`
-      : `https://api.azbry.com/api/download/ytdl?url=${encodeURIComponent(url)}&type=video`;
-    const res = await axios.get(apiUrl, { timeout: 30000 });
-
-    if (res.data?.status && res.data?.result) {
-      const r = res.data.result;
-      const downloadUrl = r.download || r.url || r.video || r.mp4;
-      if (downloadUrl) {
-        return {
-          url: downloadUrl,
-          title: r.title || 'YouTube Media'
-        };
-      }
-    }
-  } catch (e) {
-    console.log('[YT] ytdl fallback failed:', e.message);
-  }
-  return null;
-}
-
-// ─────────────────────────────────────────────
-// MASTER: try APIs in order
-// ─────────────────────────────────────────────
-async function fetchDownload(url, isAudio) {
-  // Try cobalt first (most reliable)
-  let result = await cobaltDownload(url, isAudio);
-  if (result) return result;
-
-  // Then azbry
-  result = await azbryDownload(url, isAudio);
-  if (result) return result;
-
-  // Then ytdl
-  result = await y2mateDownload(url, isAudio);
-  if (result) return result;
-
-  return null;
-}
-
-// ─────────────────────────────────────────────
-// COMMAND
-// ─────────────────────────────────────────────
 module.exports = {
   name: 'yt',
-  aliases: ['youtube', 'ytdl', 'ytv'],
-  category: 'general',
-  description: 'Download YouTube video or audio',
-  usage: '.yt [mp3|mp4] <url>',
+  aliases: ['playyt', 'ytplay', 'play', 'ytdl'],
+  category: 'download',
+  description: 'Download YouTube audio by name or URL',
+  usage: '.yt <song name or URL>',
   react: '✅',
 
   async execute(conn, mek, args, chatId, isOwner) {
     try {
-      // ─────────────────────────────────────────
-      // 1. Parse mode + URL
-      // ─────────────────────────────────────────
-      let mode = 'video';
-      let url = '';
+      const input = args.join(' ').trim();
 
-      if (args.length === 0) {
+      if (!input) {
         await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
         await conn.sendMessage(chatId, {
           text:
-            `YouTube Downloader\n\n` +
+            `YouTube Play\n\n` +
             `Usage:\n` +
-            `  ${settings.prefix || '.'}yt <url>        - video\n` +
-            `  ${settings.prefix || '.'}yt mp3 <url>    - audio only\n` +
-            `  ${settings.prefix || '.'}yt mp4 <url>    - video MP4\n\n` +
+            `  ${settings.prefix || '.'}yt <song name>\n` +
+            `  ${settings.prefix || '.'}yt <youtube url>\n\n` +
             `Examples:\n` +
-            `  ${settings.prefix || '.'}yt https://youtu.be/xxxxx\n` +
-            `  ${settings.prefix || '.'}yt mp3 https://youtube.com/watch?v=xxxxx\n\n` +
+            `  ${settings.prefix || '.'}yt Sauti Sol Suzanna\n` +
+            `  ${settings.prefix || '.'}yt https://youtu.be/xxxxx\n\n` +
             `${settings.footer}`
         });
         return;
       }
 
-      const first = args[0].toLowerCase();
-      if (['mp3', 'audio', 'music'].includes(first)) {
-        mode = 'audio';
-        url = args.slice(1).join(' ').trim();
-      } else if (['mp4', 'video'].includes(first)) {
-        mode = 'video';
-        url = args.slice(1).join(' ').trim();
-      } else {
-        url = args.join(' ').trim();
-      }
+      const isUrl = isYouTubeUrl(input);
+      const videoId = isUrl ? extractVideoId(input) : null;
 
-      if (!url) {
+      if (isUrl && !videoId) {
         await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
-        await conn.sendMessage(chatId, { text: `YouTube URL required.\n\n${settings.footer}` });
+        await conn.sendMessage(chatId, {
+          text: `Could not extract video ID from URL.\n\n${settings.footer}`
+        });
         return;
       }
 
-      if (!isYouTubeUrl(url)) {
-        await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
-        await conn.sendMessage(chatId, { text: `Not a valid YouTube URL.\n\n${settings.footer}` });
-        return;
-      }
-
-      // ─────────────────────────────────────────
-      // 2. React
-      // ─────────────────────────────────────────
       await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
       await conn.sendMessage(chatId, {
-        text: `Fetching ${mode === 'audio' ? 'audio' : 'video'}...`
+        text: isUrl ? `Downloading from URL...` : `Searching YouTube for "${input}"...`
       });
 
       // ─────────────────────────────────────────
-      // 3. Fetch download link
+      // CHOOSE ENDPOINT BASED ON INPUT TYPE
       // ─────────────────────────────────────────
-      const isAudio = mode === 'audio';
-      const result = await fetchDownload(url, isAudio);
+      let apiUrl;
+      if (isUrl) {
+        // Download by URL
+        apiUrl = `https://api.azbry.com/api/download/ytmp3?url=${encodeURIComponent(input)}`;
+      } else {
+        // Search by name
+        apiUrl = `https://api.azbry.com/api/download/ytplay2?q=${encodeURIComponent(input)}`;
+      }
 
-      if (!result || !result.url) {
+      console.log('[YT] Requesting:', apiUrl.split('?')[0]);
+
+      let data = null;
+      try {
+        const res = await axios.get(apiUrl, {
+          timeout: 60000,
+          headers: { 'User-Agent': 'Mozilla/5.0' }
+        });
+        data = res.data;
+      } catch (apiErr) {
+        console.log('[YT] API error:', apiErr.message);
+      }
+
+      // ─────────────────────────────────────────
+      // PARSE RESPONSE (both endpoints have same shape)
+      // ─────────────────────────────────────────
+      let result = null;
+
+      if (data && data.status && data.result) {
+        result = data.result;
+      } else if (data && data.result) {
+        result = data.result;
+      } else if (data && data.data) {
+        result = data.data;
+      }
+
+      // Normalize URL field
+      if (result && !result.download) {
+        result.download = result.url || result.mp3 || result.audio || result.link;
+      }
+
+      if (!result || !result.download) {
         await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
         await conn.sendMessage(chatId, {
-          text:
-            `Could not fetch download link.\n\n` +
-            `Downloader APIs may be down. Try again in a moment.\n\n` +
-            `${settings.footer}`
+          text: `Could not fetch audio.\n\n${settings.footer}`
         });
         return;
       }
 
-      const displayTitle = result.title || 'YouTube Media';
-      const safeTitle = displayTitle.slice(0, 60).replace(/[\\/:*?"<>|]/g, '') || 'media';
-
-      await conn.sendMessage(chatId, {
-        text: `Downloading: ${displayTitle}\n\nPlease wait...`
-      });
-
       // ─────────────────────────────────────────
-      // 4. Send media
+      // SEND THUMBNAIL + INFO
       // ─────────────────────────────────────────
-      try {
-        if (isAudio) {
+      const title = result.title || input;
+      const channel = result.channel || 'Unknown';
+
+      const caption =
+        `YOUTUBE PLAY\n\n` +
+        `Title: ${title}\n` +
+        `Channel: ${channel}\n` +
+        (result.url ? `URL: ${result.url}\n` : '') +
+        `\nSending audio...\n\n` +
+        `${settings.footer}`;
+
+      if (result.thumbnail) {
+        try {
           await conn.sendMessage(chatId, {
-            audio: { url: result.url },
-            mimetype: 'audio/mpeg',
-            ptt: false,
-            fileName: `${safeTitle}.mp3`
+            image: { url: result.thumbnail },
+            caption
           }, { quoted: mek });
-        } else {
-          await conn.sendMessage(chatId, {
-            video: { url: result.url },
-            mimetype: 'video/mp4',
-            caption: `*${displayTitle}*\n\n${settings.footer}`
-          }, { quoted: mek });
+        } catch (thumbErr) {
+          console.log('[YT] Thumbnail failed:', thumbErr.message);
         }
+      }
 
-        await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
-        console.log('[YT] Sent', mode, ':', displayTitle);
+      // ─────────────────────────────────────────
+      // SEND AUDIO
+      // ─────────────────────────────────────────
+      const safeTitle = String(title).slice(0, 60).replace(/[\\/:*?"<>|]/g, '');
 
-      } catch (sendErr) {
-        console.log('[YT] Send failed:', sendErr.message);
+      try {
+        await conn.sendMessage(chatId, {
+          audio: { url: result.download },
+          mimetype: 'audio/mpeg',
+          fileName: `${safeTitle}.mp3`,
+          ptt: false
+        }, { quoted: mek });
+
+        console.log('[YT] Sent audio:', safeTitle, isUrl ? '(URL)' : '(search)');
+      } catch (audioErr) {
+        console.log('[YT] Audio send failed:', audioErr.message);
         await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
         await conn.sendMessage(chatId, {
-          text:
-            `Failed to send media.\n\n` +
-            `Reason: ${sendErr.message}\n\n` +
-            `File may be too large for WhatsApp (max ~16 MB).\n\n` +
-            `${settings.footer}`
+          text: `Failed to send audio: ${audioErr.message}\n\n${settings.footer}`
         });
       }
 
     } catch (error) {
       console.log('[YT] Error:', error.message);
       try { await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } }); } catch (e) {}
-      try {
-        await conn.sendMessage(chatId, {
-          text: `Error: ${error.message}\n\n${settings.footer}`
-        });
-      } catch (e) {}
+
+      let errorMessage = error.message || 'Unknown error';
+      if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+        errorMessage = 'Request timed out. Try again.';
+      }
+
+      await conn.sendMessage(chatId, {
+        text: `YouTube Play failed.\n\n${errorMessage}\n\n${settings.footer}`
+      });
     }
   }
 };
