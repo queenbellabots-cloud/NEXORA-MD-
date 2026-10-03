@@ -1,15 +1,22 @@
 /**
- * NEXORA MD - Uptime & Stats
- * Shows bot uptime, RAM, CPU, platform, and system info
- * Accompanied by theme 8 image
+ * NEXORA MD - Live Uptime Counter
+ * Sends a message and updates it in real-time every 2 seconds
+ * Usage: .uptime
  */
 
 const settings = require('../../settings');
 const axios = require('axios');
 const os = require('os');
 
+// Uptime tracking — resets only when the process restarts
 const START_TIME = Date.now();
-const THEME_NUMBER = 8; // Image from menuThemes[8]
+
+const THEME_NUMBER = 8;
+const UPDATE_INTERVAL = 2000;   // 2 seconds
+const MAX_DURATION = 60000;     // stop after 60 seconds
+
+// Active live-update sessions
+const activeSessions = new Map();
 
 // ─────────────────────────────────────────────
 // HELPERS
@@ -43,9 +50,7 @@ function getCpuLoad() {
     const cores = os.cpus().length || 1;
     const pct = (load[0] / cores) * 100;
     return Math.min(100, Math.max(0, Math.round(pct)));
-  } catch (e) {
-    return 0;
-  }
+  } catch (e) { return 0; }
 }
 
 function getMemoryStats() {
@@ -60,9 +65,7 @@ function getProcessMemory() {
   try {
     const proc = process.memoryUsage();
     return { rss: proc.rss, heapTotal: proc.heapTotal, heapUsed: proc.heapUsed };
-  } catch (e) {
-    return { rss: 0, heapTotal: 0, heapUsed: 0 };
-  }
+  } catch (e) { return { rss: 0, heapTotal: 0, heapUsed: 0 }; }
 }
 
 function buildBar(pct, length = 15) {
@@ -71,37 +74,69 @@ function buildBar(pct, length = 15) {
   return '█'.repeat(Math.max(0, filled)) + '░'.repeat(Math.max(0, empty));
 }
 
-function formatDate(date) {
-  return date.toLocaleString('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
+function formatNow() {
+  return new Date().toLocaleString('en-GB', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
     hour12: true
   });
 }
 
-// ─────────────────────────────────────────────
-// IMAGE FETCH
-// ─────────────────────────────────────────────
 async function fetchImageBuffer(url) {
   const res = await axios.get(url, {
     responseType: 'arraybuffer',
     timeout: 20000,
     maxRedirects: 5,
     headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       'Accept': 'image/*,*/*;q=0.8'
     }
   });
-
   const type = res.headers['content-type'] || '';
-  if (!type.startsWith('image/')) {
-    throw new Error(`Not an image: content-type=${type}`);
-  }
+  if (!type.startsWith('image/')) throw new Error(`Not an image`);
   return Buffer.from(res.data);
+}
+
+function buildStatsText() {
+  const uptimeMs = Date.now() - START_TIME;
+  const uptimeStr = formatUptime(uptimeMs);
+  const mem = getMemoryStats();
+  const proc = getProcessMemory();
+  const cpuPct = getCpuLoad();
+  const procMb = Math.round(proc.rss / 1024 / 1024);
+  const heapMb = Math.round(proc.heapUsed / 1024 / 1024);
+  const cpuCores = os.cpus().length;
+  const totalCommands = (global.commands && global.commands.size) || 0;
+  const currentMode = global.botMode ? String(global.botMode).toUpperCase() : 'PUBLIC';
+
+  let text = '';
+  text += `NEXORA MD — LIVE STATS\n`;
+  text += `---------------------\n\n`;
+
+  text += `[ BOT ]\n`;
+  text += `Name: ${settings.botName || 'NEXORA MD'}\n`;
+  text += `Mode: ${currentMode}\n`;
+  text += `Commands: ${totalCommands}\n\n`;
+
+  text += `[ UPTIME ]\n`;
+  text += `Runtime: ${uptimeStr}\n`;
+  text += `Updated: ${formatNow()}\n\n`;
+
+  text += `[ PROCESS ]\n`;
+  text += `RSS: ${procMb} MB\n`;
+  text += `Heap: ${heapMb} MB\n`;
+  text += `Node: ${process.version}\n\n`;
+
+  text += `[ SYSTEM ]\n`;
+  text += `CPU Cores: ${cpuCores}\n`;
+  text += `Memory: ${formatBytes(mem.used)} / ${formatBytes(mem.total)}\n`;
+  text += `Mem Usage: ${buildBar(mem.pct)} ${mem.pct}%\n`;
+  text += `CPU Load: ${buildBar(cpuPct)} ${cpuPct}%\n\n`;
+
+  text += `Live counter — updates every 2s\n`;
+  text += `${settings.footer}`;
+
+  return text;
 }
 
 // ─────────────────────────────────────────────
@@ -109,9 +144,9 @@ async function fetchImageBuffer(url) {
 // ─────────────────────────────────────────────
 module.exports = {
   name: 'uptime',
-  aliases: ['stats', 'sysinfo', 'status'],
+  aliases: ['stats', 'sysinfo', 'liveuptime'],
   category: 'general',
-  description: 'Show bot uptime and system stats',
+  description: 'Live uptime counter — updates every 2 seconds',
   usage: '.uptime',
   react: '✅',
 
@@ -119,97 +154,76 @@ module.exports = {
     try {
       await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
 
-      const uptimeMs = Date.now() - START_TIME;
-      const uptimeStr = formatUptime(uptimeMs);
+      // Stop any existing session for this chat
+      if (activeSessions.has(chatId)) {
+        try {
+          const old = activeSessions.get(chatId);
+          clearInterval(old.interval);
+          clearTimeout(old.timeout);
+          activeSessions.delete(chatId);
+        } catch (e) {}
+      }
 
-      const mem = getMemoryStats();
-      const proc = getProcessMemory();
-      const cpuPct = getCpuLoad();
+      const text = buildStatsText();
 
-      const procMb = Math.round(proc.rss / 1024 / 1024);
-      const heapMb = Math.round(proc.heapUsed / 1024 / 1024);
+      // Send initial message with image (theme 8)
+      let sentMsg = null;
 
-      const platform = os.platform();
-      const arch = os.arch();
-      const cpuModel = os.cpus()[0]?.model || 'unknown';
-      const cpuCores = os.cpus().length;
-      const hostname = os.hostname();
-      const nodeVer = process.version;
-
-      const totalCommands = (global.commands && global.commands.size) || 0;
-      const currentMode = global.botMode ? String(global.botMode).toUpperCase() : 'PUBLIC';
-
-      const memBar = buildBar(mem.pct);
-      const cpuBar = buildBar(cpuPct);
-
-      // ─────────────────────────────────────────
-      // BUILD OUTPUT
-      // ─────────────────────────────────────────
-      let text = '';
-      text += `+---------------------------------------+\n`;
-      text += `|         NEXORA MD STATS              |\n`;
-      text += `+---------------------------------------+\n\n`;
-
-      text += `[ BOT ]\n`;
-      text += `  Name       : ${settings.botName || 'NEXORA MD'}\n`;
-      text += `  Owner      : ${settings.botOwner || 'unknown'}\n`;
-      text += `  Mode       : ${currentMode}\n`;
-      text += `  Commands   : ${totalCommands}\n`;
-      text += `  Prefix     : ${settings.prefix || '.'}\n`;
-      text += `  Time Zone  : ${settings.timeZone || 'UTC'}\n\n`;
-
-      text += `[ UPTIME ]\n`;
-      text += `  Runtime    : ${uptimeStr}\n`;
-      text += `  Started    : ${formatDate(new Date(START_TIME))}\n`;
-      text += `  Now        : ${formatDate(new Date())}\n\n`;
-
-      text += `[ PROCESS ]\n`;
-      text += `  RSS        : ${procMb} MB\n`;
-      text += `  Heap Used  : ${heapMb} MB\n`;
-      text += `  Node       : ${nodeVer}\n`;
-      text += `  PID        : ${process.pid}\n\n`;
-
-      text += `[ SYSTEM ]\n`;
-      text += `  Platform   : ${platform} (${arch})\n`;
-      text += `  Hostname   : ${hostname}\n`;
-      text += `  CPU Cores  : ${cpuCores}\n`;
-      text += `  CPU Model  : ${cpuModel.slice(0, 40)}\n\n`;
-
-      text += `[ MEMORY ]\n`;
-      text += `  Used       : ${formatBytes(mem.used)} / ${formatBytes(mem.total)}\n`;
-      text += `  Usage      : ${memBar} ${mem.pct}%\n`;
-      text += `  Free       : ${formatBytes(mem.free)}\n\n`;
-
-      text += `[ CPU ]\n`;
-      text += `  Load       : ${cpuBar} ${cpuPct}%\n\n`;
-
-      text += `${settings.footer}`;
-
-      // ─────────────────────────────────────────
-      // SEND WITH THEME 8 IMAGE
-      // ─────────────────────────────────────────
-      let imageUrl = null;
       try {
         if (settings.menuThemes && settings.menuThemes[THEME_NUMBER] && settings.menuThemes[THEME_NUMBER].image) {
-          imageUrl = settings.menuThemes[THEME_NUMBER].image;
-        }
-      } catch (e) {}
-
-      if (imageUrl) {
-        try {
-          const buffer = await fetchImageBuffer(imageUrl);
-          await conn.sendMessage(chatId, {
+          const buffer = await fetchImageBuffer(settings.menuThemes[THEME_NUMBER].image);
+          sentMsg = await conn.sendMessage(chatId, {
             image: buffer,
             caption: text
           });
-          return;
-        } catch (imgErr) {
-          console.log('[UPTIME] Image failed:', imgErr.message);
+        } else {
+          sentMsg = await conn.sendMessage(chatId, { text });
         }
+      } catch (imgErr) {
+        console.log('[UPTIME] Image failed:', imgErr.message);
+        sentMsg = await conn.sendMessage(chatId, { text });
       }
 
-      // Fallback: text only
-      await conn.sendMessage(chatId, { text });
+      if (!sentMsg || !sentMsg.key) return;
+
+      console.log('[UPTIME] Started live session for', chatId.split('@')[0]);
+
+      // ─────────────────────────────────────────
+      // START LIVE UPDATES
+      // ─────────────────────────────────────────
+      const startTime = Date.now();
+
+      const interval = setInterval(async () => {
+        try {
+          // Stop after MAX_DURATION
+          if (Date.now() - startTime > MAX_DURATION) {
+            clearInterval(interval);
+            activeSessions.delete(chatId);
+            console.log('[UPTIME] Session ended for', chatId.split('@')[0]);
+            return;
+          }
+
+          const newText = buildStatsText();
+
+          // Edit the message with updated stats
+          await conn.sendMessage(chatId, {
+            edit: sentMsg.key,
+            text: newText
+          });
+        } catch (editErr) {
+          console.log('[UPTIME] Edit failed:', editErr.message);
+          clearInterval(interval);
+          activeSessions.delete(chatId);
+        }
+      }, UPDATE_INTERVAL);
+
+      const timeout = setTimeout(() => {
+        clearInterval(interval);
+        activeSessions.delete(chatId);
+      }, MAX_DURATION);
+
+      activeSessions.set(chatId, { interval, timeout, messageKey: sentMsg.key });
+
     } catch (error) {
       console.log('[UPTIME] Error:', error.message);
       try { await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } }); } catch (e) {}
