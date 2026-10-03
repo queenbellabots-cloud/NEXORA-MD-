@@ -48,24 +48,20 @@ async function downloadMedia(mediaInfo) {
 module.exports = {
   name: 'ss',
   aliases: ['save', 'savestatus', 'savestat', 'statusave'],
-  category: 'owner',
+  category: 'general',
   description: 'Save a replied status into the current chat',
   usage: '.ss (reply to a status)',
-  ownerOnly: true,
+  ownerOnly: false,
   react: '✅',
 
   async execute(conn, mek, args, chatId, isOwner) {
     try {
-      if (!isOwner) {
-        await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
-        return;
-      }
-
       const contextInfo = mek.message?.extendedTextMessage?.contextInfo;
       const quoted = contextInfo?.quotedMessage;
 
       console.log('[SS] === Triggered ===');
       console.log('[SS] chatId:', chatId);
+      console.log('[SS] isOwner:', isOwner);
       console.log('[SS] has quoted:', !!quoted);
 
       if (!quoted) {
