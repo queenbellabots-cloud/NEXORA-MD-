@@ -3,7 +3,7 @@
  * Simple MD-style owner check (paired number = owner)
  * Public/private mode + rate limit
  * Group watchers: anti-link, anti-bad, anti-left
- * Auto-chatbot: 8-provider fallback chain + chatbot_exempt
+ * Auto-chatbot: 9 keyless providers (no API keys needed)
  * Silent view-once reveal: owner replies with .<emoji>
  */
 
@@ -115,7 +115,7 @@ ${settings.footer}`;
 }
 
 // ═══════════════════════════════════════════════════════
-// AUTO CHATBOT — 8 provider fallback chain
+// AUTO CHATBOT — 9 keyless providers
 // ═══════════════════════════════════════════════════════
 async function handleAutoChatBot(conn, mek) {
   try {
@@ -146,19 +146,18 @@ async function handleAutoChatBot(conn, mek) {
     } catch (e) {}
 
     const senderNum = sender.split('@')[0].split(':')[0];
-    const sessionId = 'nexora_' + senderNum;
 
     let reply = null;
     let lastError = null;
+    let usedProvider = '';
 
     // ─── 1: GPT-5.5 ───
     if (!reply) {
       try {
-        console.log('[AUTOCHATBOT] 1/8 GPT-5.5');
+        console.log('[AUTOCHATBOT] 1/9 GPT-5.5');
 
         const res = await axios.post('https://apis.davidcyril.name.ng/ai/gpt-5.5', {
-          message: text,
-          name: pushName
+          message: text, name: pushName
         }, {
           headers: { 'Content-Type': 'application/json' },
           timeout: 45000
@@ -174,6 +173,7 @@ async function handleAutoChatBot(conn, mek) {
 
         if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
           reply = candidate.trim();
+          usedProvider = 'GPT-5.5';
           console.log('[AUTOCHATBOT] ✅ GPT-5.5');
         }
       } catch (e) {
@@ -182,14 +182,13 @@ async function handleAutoChatBot(conn, mek) {
       }
     }
 
-    // ─── 2: DeepSeek V3.2 ───
+    // ─── 2: DeepSeek ───
     if (!reply) {
       try {
-        console.log('[AUTOCHATBOT] 2/8 DeepSeek');
+        console.log('[AUTOCHATBOT] 2/9 DeepSeek');
 
         const res = await axios.post('https://apis.davidcyril.name.ng/ai/deepseek-v3.2-thinking', {
-          message: text,
-          name: pushName
+          message: text, name: pushName
         }, {
           headers: { 'Content-Type': 'application/json' },
           timeout: 45000
@@ -206,6 +205,7 @@ async function handleAutoChatBot(conn, mek) {
 
         if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
           reply = candidate.trim();
+          usedProvider = 'DeepSeek';
           console.log('[AUTOCHATBOT] ✅ DeepSeek');
         }
       } catch (e) {
@@ -217,11 +217,10 @@ async function handleAutoChatBot(conn, mek) {
     // ─── 3: Blackbox ───
     if (!reply) {
       try {
-        console.log('[AUTOCHATBOT] 3/8 Blackbox');
+        console.log('[AUTOCHATBOT] 3/9 Blackbox');
 
         const res = await axios.post('https://apis.davidcyril.name.ng/blackbox', {
-          message: text,
-          name: pushName
+          message: text, name: pushName
         }, {
           headers: { 'Content-Type': 'application/json' },
           timeout: 45000
@@ -237,6 +236,7 @@ async function handleAutoChatBot(conn, mek) {
 
         if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
           reply = candidate.trim();
+          usedProvider = 'Blackbox';
           console.log('[AUTOCHATBOT] ✅ Blackbox');
         }
       } catch (e) {
@@ -245,23 +245,128 @@ async function handleAutoChatBot(conn, mek) {
       }
     }
 
-    // ─── 4: Omegatech ───
+    // ─── 4: Kilo Gateway ───
     if (!reply) {
       try {
-        console.log('[AUTOCHATBOT] 4/8 Omegatech');
+        console.log('[AUTOCHATBOT] 4/9 Kilo Gateway');
 
-        const res = await axios.post('https://api.omegatech.xyz/ai/chat', {
-          message: text, sessionId, name: pushName
+        const res = await axios.post('https://api.kilo.ai/api/gateway/chat/completions', {
+          model: 'kilo-auto/free',
+          messages: [
+            { role: 'system', content: 'You are NEXORA, a helpful WhatsApp assistant. Reply naturally in the user\'s language.' },
+            { role: 'user', content: text }
+          ]
         }, {
           headers: { 'Content-Type': 'application/json' },
           timeout: 30000
         });
 
-        const data = res.data;
-        const candidate = data?.data?.reply || data?.reply || data?.response;
+        const candidate = res.data?.choices?.[0]?.message?.content;
 
         if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
           reply = candidate.trim();
+          usedProvider = 'Kilo';
+          console.log('[AUTOCHATBOT] ✅ Kilo');
+        }
+      } catch (e) {
+        lastError = e.message;
+        console.log('[AUTOCHATBOT] ❌ Kilo:', e.message);
+      }
+    }
+
+    // ─── 5: KeylessAI (Thryx) ───
+    if (!reply) {
+      try {
+        console.log('[AUTOCHATBOT] 5/9 KeylessAI');
+
+        const res = await axios.post('https://keylessai.thryx.workers.dev/v1/chat/completions', {
+          model: 'gpt-4o',
+          messages: [{ role: 'user', content: text }]
+        }, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 30000
+        });
+
+        const candidate = res.data?.choices?.[0]?.message?.content;
+
+        if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
+          reply = candidate.trim();
+          usedProvider = 'KeylessAI';
+          console.log('[AUTOCHATBOT] ✅ KeylessAI');
+        }
+      } catch (e) {
+        lastError = e.message;
+        console.log('[AUTOCHATBOT] ❌ KeylessAI:', e.message);
+      }
+    }
+
+    // ─── 6: GPT-AI v1 ───
+    if (!reply) {
+      try {
+        console.log('[AUTOCHATBOT] 6/9 GPT-AI v1');
+
+        const res = await axios.post('https://gpt-ai-olive.vercel.app/chat/v1', {
+          userMessage: text
+        }, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 30000
+        });
+
+        const candidate = res.data?.reply || res.data?.response || res.data?.message;
+
+        if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
+          reply = candidate.trim();
+          usedProvider = 'GPT-AI v1';
+          console.log('[AUTOCHATBOT] ✅ GPT-AI v1');
+        }
+      } catch (e) {
+        lastError = e.message;
+        console.log('[AUTOCHATBOT] ❌ GPT-AI v1:', e.message);
+      }
+    }
+
+    // ─── 7: GPT-AI v2 ───
+    if (!reply) {
+      try {
+        console.log('[AUTOCHATBOT] 7/9 GPT-AI v2');
+
+        const res = await axios.post('https://gpt-ai-olive.vercel.app/chat/v2', {
+          userMessage: text
+        }, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 30000
+        });
+
+        const candidate = res.data?.reply || res.data?.response || res.data?.message;
+
+        if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
+          reply = candidate.trim();
+          usedProvider = 'GPT-AI v2';
+          console.log('[AUTOCHATBOT] ✅ GPT-AI v2');
+        }
+      } catch (e) {
+        lastError = e.message;
+        console.log('[AUTOCHATBOT] ❌ GPT-AI v2:', e.message);
+      }
+    }
+
+    // ─── 8: Omegatech ───
+    if (!reply) {
+      try {
+        console.log('[AUTOCHATBOT] 8/9 Omegatech');
+
+        const res = await axios.post('https://api.omegatech.xyz/ai/chat', {
+          message: text, sessionId: 'nexora_' + senderNum, name: pushName
+        }, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 30000
+        });
+
+        const candidate = res.data?.data?.reply || res.data?.reply || res.data?.response;
+
+        if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
+          reply = candidate.trim();
+          usedProvider = 'Omegatech';
           console.log('[AUTOCHATBOT] ✅ Omegatech');
         }
       } catch (e) {
@@ -270,97 +375,10 @@ async function handleAutoChatBot(conn, mek) {
       }
     }
 
-    // ─── 5: Pollinations ───
+    // ─── 9: SimSimi ───
     if (!reply) {
       try {
-        console.log('[AUTOCHATBOT] 5/8 Pollinations');
-
-        const res = await axios.post('https://text.pollinations.ai/openai', {
-          model: 'openai',
-          messages: [
-            { role: 'system', content: 'You are NEXORA, a helpful WhatsApp assistant. Reply naturally in the user\'s language. Keep replies concise.' },
-            { role: 'user', content: text }
-          ]
-        }, {
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 30000
-        });
-
-        const candidate = res.data?.choices?.[0]?.message?.content ||
-                          (typeof res.data === 'string' ? res.data : null);
-
-        if (candidate && candidate.trim().length > 0) {
-          reply = candidate.trim();
-          console.log('[AUTOCHATBOT] ✅ Pollinations');
-        }
-      } catch (e) {
-        lastError = e.message;
-        console.log('[AUTOCHATBOT] ❌ Pollinations:', e.message);
-      }
-    }
-
-    // ─── 6: Groq (needs GROQ_API_KEY) ───
-    if (!reply && process.env.GROQ_API_KEY) {
-      try {
-        console.log('[AUTOCHATBOT] 6/8 Groq');
-
-        const res = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-          model: 'llama-3.3-70b-versatile',
-          messages: [
-            { role: 'system', content: 'You are NEXORA, a helpful WhatsApp assistant.' },
-            { role: 'user', content: text }
-          ],
-          max_tokens: 1024
-        }, {
-          headers: {
-            'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          timeout: 30000
-        });
-
-        const candidate = res.data?.choices?.[0]?.message?.content;
-
-        if (candidate && candidate.trim().length > 0) {
-          reply = candidate.trim();
-          console.log('[AUTOCHATBOT] ✅ Groq');
-        }
-      } catch (e) {
-        lastError = e.message;
-        console.log('[AUTOCHATBOT] ❌ Groq:', e.message);
-      }
-    }
-
-    // ─── 7: Gemini (needs GEMINI_API_KEY) ───
-    if (!reply && process.env.GEMINI_API_KEY) {
-      try {
-        console.log('[AUTOCHATBOT] 7/8 Gemini');
-
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
-
-        const res = await axios.post(url, {
-          contents: [{ parts: [{ text }] }]
-        }, {
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 30000
-        });
-
-        const candidate = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-        if (candidate && candidate.trim().length > 0) {
-          reply = candidate.trim();
-          console.log('[AUTOCHATBOT] ✅ Gemini');
-        }
-      } catch (e) {
-        lastError = e.message;
-        console.log('[AUTOCHATBOT] ❌ Gemini:', e.message);
-      }
-    }
-
-    // ─── 8: SimSimi (last resort) ───
-    if (!reply) {
-      try {
-        console.log('[AUTOCHATBOT] 8/8 SimSimi');
+        console.log('[AUTOCHATBOT] 9/9 SimSimi');
 
         const res = await axios.get(`https://api.simsimi.net/v2/?text=${encodeURIComponent(text)}&lc=en`, {
           timeout: 15000
@@ -370,6 +388,7 @@ async function handleAutoChatBot(conn, mek) {
 
         if (candidate && candidate !== 'success' && candidate.trim().length > 0) {
           reply = candidate.trim();
+          usedProvider = 'SimSimi';
           console.log('[AUTOCHATBOT] ✅ SimSimi');
         }
       } catch (e) {
@@ -413,7 +432,7 @@ async function handleAutoChatBot(conn, mek) {
       });
     }
 
-    console.log('[AUTOCHATBOT] Replied to', senderNum);
+    console.log(`[AUTOCHATBOT] Replied to ${senderNum} via ${usedProvider}`);
   } catch (error) {
     logger.error(`Auto-ChatBot Error: ${error.message}`);
   }
@@ -442,9 +461,9 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
     const prefix = settings.prefix || '.';
     const sender = mek.key.participant || mek.key.remoteJid;
 
-    // ─────────────────────────────────────────
+    // ═════════════════════════════════════════
     // PRIORITY 1 — SILENT VIEW-ONCE REVEAL (.emoji)
-    // ─────────────────────────────────────────
+    // ═════════════════════════════════════════
     if (text && text.startsWith(prefix) && text.length > prefix.length) {
       const afterPrefixCheck = text.slice(prefix.length).trim();
 
