@@ -200,7 +200,7 @@ async function buildStatsText() {
   text += `Mem Usage: ${buildBar(mem.pct)} ${mem.pct}%\n`;
   text += `CPU Load: ${buildBar(cpuPct)} ${cpuPct}%\n\n`;
 
-  text += `> Wuod Min Lynne\n`;
+  text += `𝐑𝐨𝐲𝐓𝐞𝐜𝐡\n`;
   text += `${settings.footer}`;
 
   return text;
