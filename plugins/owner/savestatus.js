@@ -1,20 +1,18 @@
 /**
  * NEXORA MD - Save Replied Status
- * Save a status to your DM instantly
- * Usage: reply to a status with .ss (or .save, .savestatus)
+ * Saves the replied status media into the current chat (DM with the poster)
+ * Usage: reply to a status with .ss (or .save)
  */
 
 const settings = require('../../settings');
 const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
-const ownerLib = require('../../lib/owner');
 
 // ─────────────────────────────────────────────
 // DEEP MEDIA EXTRACTION (unwraps all known wrappers)
-// ─────────────────────────────────────────
+// ─────────────────────────────────────────────
 function extractMediaFromQuoted(quoted) {
   if (!quoted) return null;
 
-  // Try up to 4 layers of unwrapping
   let inner = quoted;
   for (let i = 0; i < 4; i++) {
     const wrapper =
@@ -22,14 +20,10 @@ function extractMediaFromQuoted(quoted) {
       inner.viewOnceMessage?.message ||
       inner.viewOnceMessageV2Extension?.message ||
       inner.documentWithCaptionMessage?.message ||
-      inner.ephemeralMessage?.message ||
-      inner.statusMentionMessage?.message;
+      inner.ephemeralMessage?.message;
 
-    if (wrapper) {
-      inner = wrapper;
-    } else {
-      break;
-    }
+    if (wrapper) inner = wrapper;
+    else break;
   }
 
   if (inner.imageMessage) {
@@ -55,78 +49,46 @@ module.exports = {
   name: 'ss',
   aliases: ['save', 'savestatus', 'savestat', 'statusave'],
   category: 'owner',
-  description: 'Save a replied status to your DM instantly',
+  description: 'Save a replied status into the current chat',
   usage: '.ss (reply to a status)',
   ownerOnly: true,
   react: '✅',
 
   async execute(conn, mek, args, chatId, isOwner) {
-    const startTime = Date.now();
-
     try {
       if (!isOwner) {
         await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
         return;
       }
 
-      // ─────────────────────────────────────────
-      // DEBUG: Log structure
-      // ─────────────────────────────────────────
       const contextInfo = mek.message?.extendedTextMessage?.contextInfo;
       const quoted = contextInfo?.quotedMessage;
 
       console.log('[SS] === Triggered ===');
       console.log('[SS] chatId:', chatId);
-      console.log('[SS] has contextInfo:', !!contextInfo);
       console.log('[SS] has quoted:', !!quoted);
 
-      if (quoted) {
-        console.log('[SS] quoted keys:', Object.keys(quoted));
-      }
-
-      // ─────────────────────────────────────────
-      // No quoted → show usage
-      // ─────────────────────────────────────────
       if (!quoted) {
         await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
         await conn.sendMessage(chatId, {
-          text:
-            `Save a status to your DM\n\n` +
-            `Usage:\n` +
-            `  Reply to a status with ${settings.prefix || '.'}ss\n\n` +
-            `Note: reply from inside WhatsApp's status viewer.\n\n` +
-            `${settings.footer}`
+          text: `Reply to a status with ${settings.prefix || '.'}ss\n\n${settings.footer}`
         });
         return;
       }
 
-      // ─────────────────────────────────────────
-      // Extract media
-      // ─────────────────────────────────────────
       const mediaInfo = extractMediaFromQuoted(quoted);
 
       if (!mediaInfo) {
-        console.log('[SS] No media found. Structure:');
-        console.log(JSON.stringify(quoted, null, 2).slice(0, 600));
-
+        console.log('[SS] No media found. Structure:', JSON.stringify(quoted).slice(0, 300));
         await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
         await conn.sendMessage(chatId, {
-          text:
-            `No media found in the replied status.\n\n` +
-            `Possible reasons:\n` +
-            `- Status is older than 24 hours (expired)\n` +
-            `- Status is text-only (no media)\n` +
-            `- WhatsApp didn't share the media with us\n\n` +
-            `${settings.footer}`
+          text: `No media found in the replied status.\n\n${settings.footer}`
         });
         return;
       }
 
       console.log('[SS] Media type:', mediaInfo.type);
 
-      // ─────────────────────────────────────────
-      // Download
-      // ─────────────────────────────────────────
       let buffer = null;
       try {
         buffer = await downloadMedia(mediaInfo);
@@ -144,16 +106,8 @@ module.exports = {
       }
 
       // ─────────────────────────────────────────
-      // Send to owner DM
+      // SEND TO CURRENT CHAT (the DM with the poster)
       // ─────────────────────────────────────────
-      const owners = ownerLib.getOwnerNumbers(conn);
-      const ownerNum = owners[0] || settings.ownerNumber;
-      if (!ownerNum) {
-        await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
-        return;
-      }
-
-      const ownerJid = ownerNum + '@s.whatsapp.net';
       const sender = mek.key.participant || mek.key.remoteJid;
       const senderNum = String(sender).split('@')[0].split(':')[0];
 
@@ -169,25 +123,14 @@ module.exports = {
       else if (mediaInfo.type === 'video') content.video = buffer;
       else if (mediaInfo.type === 'audio') { content.audio = buffer; content.ptt = true; }
 
-      await conn.sendMessage(ownerJid, content);
-
-      const elapsed = Date.now() - startTime;
-      console.log('[SS] Sent to owner in', elapsed, 'ms');
-
+      await conn.sendMessage(chatId, content);
       await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
-      await conn.sendMessage(chatId, {
-        text: `Status saved to your DM (${(buffer.length / 1024).toFixed(1)} KB)\n\n${settings.footer}`
-      });
+
+      console.log('[SS] ✅ Sent to chat:', chatId.split('@')[0]);
 
     } catch (error) {
       console.log('[SS] Error:', error.message);
-      console.log('[SS] Stack:', error.stack);
       try { await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } }); } catch (e) {}
-      try {
-        await conn.sendMessage(chatId, {
-          text: `Error: ${error.message}\n\n${settings.footer}`
-        });
-      } catch (e) {}
     }
   }
 };
