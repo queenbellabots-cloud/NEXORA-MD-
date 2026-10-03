@@ -1,6 +1,6 @@
 /**
  * NEXORA MD - Live Uptime Counter
- * Sends a message and updates it in real-time every 2 seconds
+ * Real-time stats with server location
  * Usage: .uptime
  */
 
@@ -8,15 +8,52 @@ const settings = require('../../settings');
 const axios = require('axios');
 const os = require('os');
 
-// Uptime tracking — resets only when the process restarts
 const START_TIME = Date.now();
-
 const THEME_NUMBER = 8;
-const UPDATE_INTERVAL = 2000;   // 2 seconds
-const MAX_DURATION = 60000;     // stop after 60 seconds
+const UPDATE_INTERVAL = 2000;
+const MAX_DURATION = 60000;
 
-// Active live-update sessions
 const activeSessions = new Map();
+
+// ─────────────────────────────────────────────
+// SERVER LOCATION (cached after first fetch)
+// ─────────────────────────────────────────────
+let cachedLocation = null;
+
+async function getServerLocation() {
+  if (cachedLocation) return cachedLocation;
+
+  try {
+    const res = await axios.get('http://ip-api.com/json/?fields=status,country,countryCode,regionName,city,isp,query', {
+      timeout: 10000
+    });
+
+    if (res.data && res.data.status === 'success') {
+      cachedLocation = {
+        ip: res.data.query,
+        city: res.data.city || 'Unknown',
+        region: res.data.regionName || 'Unknown',
+        country: res.data.country || 'Unknown',
+        countryCode: res.data.countryCode || '',
+        isp: res.data.isp || 'Unknown'
+      };
+      console.log('[UPTIME] Server location:', cachedLocation.city, cachedLocation.country);
+      return cachedLocation;
+    }
+  } catch (e) {
+    console.log('[UPTIME] Location fetch failed:', e.message);
+  }
+
+  cachedLocation = {
+    ip: 'unknown',
+    city: 'Unknown',
+    region: '',
+    country: 'Unknown',
+    countryCode: '',
+    isp: 'Unknown'
+  };
+  return cachedLocation;
+}
 
 // ─────────────────────────────────────────────
 // HELPERS
@@ -82,6 +119,19 @@ function formatNow() {
   });
 }
 
+// ─────────────────────────────────────────────
+// COUNT UNIQUE COMMANDS (ignore aliases)
+// ─────────────────────────────────────────────
+function countUniqueCommands() {
+  const uniqueNames = new Set();
+  if (global.commands && typeof global.commands.forEach === 'function') {
+    global.commands.forEach((cmd) => {
+      if (cmd && cmd.name) uniqueNames.add(cmd.name);
+    });
+  }
+  return uniqueNames.size;
+}
+
 async function fetchImageBuffer(url) {
   const res = await axios.get(url, {
     responseType: 'arraybuffer',
@@ -97,7 +147,10 @@ async function fetchImageBuffer(url) {
   return Buffer.from(res.data);
 }
 
-function buildStatsText() {
+// ─────────────────────────────────────────────
+// BUILD STATS TEXT
+// ─────────────────────────────────────────────
+async function buildStatsText() {
   const uptimeMs = Date.now() - START_TIME;
   const uptimeStr = formatUptime(uptimeMs);
   const mem = getMemoryStats();
@@ -106,8 +159,11 @@ function buildStatsText() {
   const procMb = Math.round(proc.rss / 1024 / 1024);
   const heapMb = Math.round(proc.heapUsed / 1024 / 1024);
   const cpuCores = os.cpus().length;
-  const totalCommands = (global.commands && global.commands.size) || 0;
+  const cpuModel = os.cpus()[0]?.model || 'Unknown';
+  const totalCommands = countUniqueCommands();
   const currentMode = global.botMode ? String(global.botMode).toUpperCase() : 'PUBLIC';
+
+  const loc = await getServerLocation();
 
   let text = '';
   text += `NEXORA MD — LIVE STATS\n`;
@@ -125,10 +181,21 @@ function buildStatsText() {
   text += `[ PROCESS ]\n`;
   text += `RSS: ${procMb} MB\n`;
   text += `Heap: ${heapMb} MB\n`;
-  text += `Node: ${process.version}\n\n`;
+  text += `Node: ${process.version}\n`;
+  text += `PID: ${process.pid}\n\n`;
+
+  text += `[ SERVER LOCATION ]\n`;
+  text += `City: ${loc.city}${loc.region ? ', ' + loc.region : ''}\n`;
+  text += `Country: ${loc.country}${loc.countryCode ? ' (' + loc.countryCode + ')' : ''}\n`;
+  text += `ISP: ${loc.isp}\n`;
+  text += `IP: ${loc.ip}\n\n`;
 
   text += `[ SYSTEM ]\n`;
+  text += `Platform: ${os.platform()} (${os.arch()})\n`;
   text += `CPU Cores: ${cpuCores}\n`;
+  text += `CPU: ${cpuModel.slice(0, 40)}\n\n`;
+
+  text += `[ MEMORY ]\n`;
   text += `Memory: ${formatBytes(mem.used)} / ${formatBytes(mem.total)}\n`;
   text += `Mem Usage: ${buildBar(mem.pct)} ${mem.pct}%\n`;
   text += `CPU Load: ${buildBar(cpuPct)} ${cpuPct}%\n\n`;
@@ -146,7 +213,7 @@ module.exports = {
   name: 'uptime',
   aliases: ['stats', 'sysinfo', 'liveuptime'],
   category: 'general',
-  description: 'Live uptime counter — updates every 2 seconds',
+  description: 'Live uptime counter with real server location',
   usage: '.uptime',
   react: '✅',
 
@@ -154,7 +221,6 @@ module.exports = {
     try {
       await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
 
-      // Stop any existing session for this chat
       if (activeSessions.has(chatId)) {
         try {
           const old = activeSessions.get(chatId);
@@ -164,9 +230,8 @@ module.exports = {
         } catch (e) {}
       }
 
-      const text = buildStatsText();
+      const text = await buildStatsText();
 
-      // Send initial message with image (theme 8)
       let sentMsg = null;
 
       try {
@@ -188,14 +253,10 @@ module.exports = {
 
       console.log('[UPTIME] Started live session for', chatId.split('@')[0]);
 
-      // ─────────────────────────────────────────
-      // START LIVE UPDATES
-      // ─────────────────────────────────────────
       const startTime = Date.now();
 
       const interval = setInterval(async () => {
         try {
-          // Stop after MAX_DURATION
           if (Date.now() - startTime > MAX_DURATION) {
             clearInterval(interval);
             activeSessions.delete(chatId);
@@ -203,9 +264,8 @@ module.exports = {
             return;
           }
 
-          const newText = buildStatsText();
+          const newText = await buildStatsText();
 
-          // Edit the message with updated stats
           await conn.sendMessage(chatId, {
             edit: sentMsg.key,
             text: newText
