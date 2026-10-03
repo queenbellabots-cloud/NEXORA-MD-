@@ -3,8 +3,8 @@
  * Simple MD-style owner check (paired number = owner)
  * Public/private mode + rate limit
  * Group watchers: anti-link, anti-bad, anti-left
- * Auto-chatbot: Omegatech AI (with session memory + fallback)
- * Silent view-once reveal: owner replies with .<emoji> (single send)
+ * Auto-chatbot: 8-provider fallback chain + chatbot_exempt
+ * Silent view-once reveal: owner replies with .<emoji>
  */
 
 const settings = require('./settings');
@@ -34,17 +34,22 @@ function getBotOwnerNumber() {
 }
 
 // ═══════════════════════════════════════════════════════
-// MEDIA EXTRACTION (unwraps view-once + document wrappers)
+// MEDIA EXTRACTION
 // ═══════════════════════════════════════════════════════
 function extractMedia(quoted) {
   if (!quoted) return null;
 
   let inner = quoted;
-
-  if (quoted.viewOnceMessageV2?.message) inner = quoted.viewOnceMessageV2.message;
-  else if (quoted.viewOnceMessage?.message) inner = quoted.viewOnceMessage.message;
-  else if (quoted.viewOnceMessageV2Extension?.message) inner = quoted.viewOnceMessageV2Extension.message;
-  else if (quoted.documentWithCaptionMessage?.message) inner = quoted.documentWithCaptionMessage.message;
+  for (let i = 0; i < 4; i++) {
+    const wrapper =
+      inner.viewOnceMessageV2?.message ||
+      inner.viewOnceMessage?.message ||
+      inner.viewOnceMessageV2Extension?.message ||
+      inner.documentWithCaptionMessage?.message ||
+      inner.ephemeralMessage?.message;
+    if (wrapper) inner = wrapper;
+    else break;
+  }
 
   if (inner.imageMessage) return { type: 'image', media: inner.imageMessage, caption: inner.imageMessage.caption || '' };
   if (inner.videoMessage) return { type: 'video', media: inner.videoMessage, caption: inner.videoMessage.caption || '' };
@@ -65,7 +70,7 @@ async function downloadMedia(mediaInfo) {
 }
 
 // ═══════════════════════════════════════════════════════
-// SILENT REVEAL — internal fallback only
+// SILENT REVEAL — internal fallback
 // ═══════════════════════════════════════════════════════
 async function silentReveal(conn, mek, chatId) {
   try {
@@ -110,7 +115,7 @@ ${settings.footer}`;
 }
 
 // ═══════════════════════════════════════════════════════
-// AUTO CHATBOT (Omegatech AI + fallback)
+// AUTO CHATBOT — 8 provider fallback chain
 // ═══════════════════════════════════════════════════════
 async function handleAutoChatBot(conn, mek) {
   try {
@@ -146,119 +151,240 @@ async function handleAutoChatBot(conn, mek) {
     let reply = null;
     let lastError = null;
 
-    // ─── Attempt 1: Omegatech ───
-    try {
-      console.log('[AUTOCHATBOT] Trying: Omegatech');
-
-      const res = await axios.post('https://api.omegatech.xyz/ai/chat', {
-        message: text,
-        sessionId,
-        name: pushName
-      }, {
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 45000
-      });
-
-      const data = res.data;
-      const candidate =
-        data?.data?.reply ||
-        data?.reply ||
-        data?.response ||
-        data?.message ||
-        data?.result ||
-        data?.answer ||
-        null;
-
-      if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
-        if (candidate.trim() !== text.trim() || data?.success === true) {
-          reply = candidate.trim();
-          console.log('[AUTOCHATBOT] Success: Omegatech');
-        }
-      }
-    } catch (e) {
-      lastError = e.message;
-      console.log('[AUTOCHATBOT] Omegatech failed:', e.message);
-    }
-
-    // ─── Attempt 2: Pollinations POST ───
+    // ─── 1: GPT-5.5 ───
     if (!reply) {
       try {
-        console.log('[AUTOCHATBOT] Trying: pollinations (POST)');
+        console.log('[AUTOCHATBOT] 1/8 GPT-5.5');
 
-        const res = await axios.post('https://text.pollinations.ai/openai', {
-          model: 'openai',
-          messages: [
-            { role: 'system', content: 'You are NEXORA, a helpful WhatsApp assistant. Reply naturally in the language the user uses.' },
-            { role: 'user', content: text }
-          ]
+        const res = await axios.post('https://apis.davidcyril.name.ng/ai/gpt-5.5', {
+          message: text,
+          name: pushName
         }, {
           headers: { 'Content-Type': 'application/json' },
           timeout: 45000
         });
 
         const candidate =
-          res.data?.choices?.[0]?.message?.content ||
           res.data?.reply ||
           res.data?.response ||
+          res.data?.message ||
+          res.data?.result ||
+          res.data?.data?.reply ||
           (typeof res.data === 'string' ? res.data : null);
 
         if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
           reply = candidate.trim();
-          console.log('[AUTOCHATBOT] Success: pollinations POST');
+          console.log('[AUTOCHATBOT] ✅ GPT-5.5');
         }
       } catch (e) {
         lastError = e.message;
-        console.log('[AUTOCHATBOT] Pollinations POST failed:', e.message);
+        console.log('[AUTOCHATBOT] ❌ GPT-5.5:', e.message);
       }
     }
 
-    // ─── Attempt 3: Pollinations GET ───
+    // ─── 2: DeepSeek V3.2 ───
     if (!reply) {
       try {
-        console.log('[AUTOCHATBOT] Trying: pollinations (GET)');
+        console.log('[AUTOCHATBOT] 2/8 DeepSeek');
 
-        const url = `https://text.pollinations.ai/${encodeURIComponent(text)}?model=openai`;
-        const res = await axios.get(url, { timeout: 45000 });
+        const res = await axios.post('https://apis.davidcyril.name.ng/ai/deepseek-v3.2-thinking', {
+          message: text,
+          name: pushName
+        }, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 45000
+        });
 
-        const candidate = typeof res.data === 'string'
-          ? res.data
-          : (res.data?.reply || res.data?.response);
+        const candidate =
+          res.data?.reply ||
+          res.data?.response ||
+          res.data?.message ||
+          res.data?.result ||
+          res.data?.data?.reply ||
+          res.data?.thinking ||
+          (typeof res.data === 'string' ? res.data : null);
 
         if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
           reply = candidate.trim();
-          console.log('[AUTOCHATBOT] Success: pollinations GET');
+          console.log('[AUTOCHATBOT] ✅ DeepSeek');
         }
       } catch (e) {
         lastError = e.message;
-        console.log('[AUTOCHATBOT] Pollinations GET failed:', e.message);
+        console.log('[AUTOCHATBOT] ❌ DeepSeek:', e.message);
       }
     }
 
-    // ─── Attempt 4: SimSimi ───
+    // ─── 3: Blackbox ───
     if (!reply) {
       try {
-        console.log('[AUTOCHATBOT] Trying: simsimi');
+        console.log('[AUTOCHATBOT] 3/8 Blackbox');
 
-        const url = `https://api.simsimi.net/v2/?text=${encodeURIComponent(text)}&lc=en`;
-        const res = await axios.get(url, { timeout: 20000 });
+        const res = await axios.post('https://apis.davidcyril.name.ng/blackbox', {
+          message: text,
+          name: pushName
+        }, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 45000
+        });
+
+        const candidate =
+          res.data?.reply ||
+          res.data?.response ||
+          res.data?.message ||
+          res.data?.result ||
+          res.data?.data?.reply ||
+          (typeof res.data === 'string' ? res.data : null);
+
+        if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
+          reply = candidate.trim();
+          console.log('[AUTOCHATBOT] ✅ Blackbox');
+        }
+      } catch (e) {
+        lastError = e.message;
+        console.log('[AUTOCHATBOT] ❌ Blackbox:', e.message);
+      }
+    }
+
+    // ─── 4: Omegatech ───
+    if (!reply) {
+      try {
+        console.log('[AUTOCHATBOT] 4/8 Omegatech');
+
+        const res = await axios.post('https://api.omegatech.xyz/ai/chat', {
+          message: text, sessionId, name: pushName
+        }, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 30000
+        });
+
+        const data = res.data;
+        const candidate = data?.data?.reply || data?.reply || data?.response;
+
+        if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
+          reply = candidate.trim();
+          console.log('[AUTOCHATBOT] ✅ Omegatech');
+        }
+      } catch (e) {
+        lastError = e.message;
+        console.log('[AUTOCHATBOT] ❌ Omegatech:', e.message);
+      }
+    }
+
+    // ─── 5: Pollinations ───
+    if (!reply) {
+      try {
+        console.log('[AUTOCHATBOT] 5/8 Pollinations');
+
+        const res = await axios.post('https://text.pollinations.ai/openai', {
+          model: 'openai',
+          messages: [
+            { role: 'system', content: 'You are NEXORA, a helpful WhatsApp assistant. Reply naturally in the user\'s language. Keep replies concise.' },
+            { role: 'user', content: text }
+          ]
+        }, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 30000
+        });
+
+        const candidate = res.data?.choices?.[0]?.message?.content ||
+                          (typeof res.data === 'string' ? res.data : null);
+
+        if (candidate && candidate.trim().length > 0) {
+          reply = candidate.trim();
+          console.log('[AUTOCHATBOT] ✅ Pollinations');
+        }
+      } catch (e) {
+        lastError = e.message;
+        console.log('[AUTOCHATBOT] ❌ Pollinations:', e.message);
+      }
+    }
+
+    // ─── 6: Groq (needs GROQ_API_KEY) ───
+    if (!reply && process.env.GROQ_API_KEY) {
+      try {
+        console.log('[AUTOCHATBOT] 6/8 Groq');
+
+        const res = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+          model: 'llama-3.3-70b-versatile',
+          messages: [
+            { role: 'system', content: 'You are NEXORA, a helpful WhatsApp assistant.' },
+            { role: 'user', content: text }
+          ],
+          max_tokens: 1024
+        }, {
+          headers: {
+            'Authorization': `Bearer ${process.env.GROQ_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 30000
+        });
+
+        const candidate = res.data?.choices?.[0]?.message?.content;
+
+        if (candidate && candidate.trim().length > 0) {
+          reply = candidate.trim();
+          console.log('[AUTOCHATBOT] ✅ Groq');
+        }
+      } catch (e) {
+        lastError = e.message;
+        console.log('[AUTOCHATBOT] ❌ Groq:', e.message);
+      }
+    }
+
+    // ─── 7: Gemini (needs GEMINI_API_KEY) ───
+    if (!reply && process.env.GEMINI_API_KEY) {
+      try {
+        console.log('[AUTOCHATBOT] 7/8 Gemini');
+
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+
+        const res = await axios.post(url, {
+          contents: [{ parts: [{ text }] }]
+        }, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: 30000
+        });
+
+        const candidate = res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+        if (candidate && candidate.trim().length > 0) {
+          reply = candidate.trim();
+          console.log('[AUTOCHATBOT] ✅ Gemini');
+        }
+      } catch (e) {
+        lastError = e.message;
+        console.log('[AUTOCHATBOT] ❌ Gemini:', e.message);
+      }
+    }
+
+    // ─── 8: SimSimi (last resort) ───
+    if (!reply) {
+      try {
+        console.log('[AUTOCHATBOT] 8/8 SimSimi');
+
+        const res = await axios.get(`https://api.simsimi.net/v2/?text=${encodeURIComponent(text)}&lc=en`, {
+          timeout: 15000
+        });
 
         const candidate = res.data?.success || res.data?.response || res.data?.msg;
 
-        if (candidate && typeof candidate === 'string' && candidate.trim().length > 0 && candidate !== 'success') {
+        if (candidate && candidate !== 'success' && candidate.trim().length > 0) {
           reply = candidate.trim();
-          console.log('[AUTOCHATBOT] Success: simsimi');
+          console.log('[AUTOCHATBOT] ✅ SimSimi');
         }
       } catch (e) {
         lastError = e.message;
-        console.log('[AUTOCHATBOT] SimSimi failed:', e.message);
+        console.log('[AUTOCHATBOT] ❌ SimSimi:', e.message);
       }
     }
 
+    // ─── All failed ───
     if (!reply) {
-      console.log('[AUTOCHATBOT] All endpoints failed. Last error:', lastError);
+      console.log('[AUTOCHATBOT] All providers failed. Last:', lastError);
       try {
         await conn.sendMessage(chatId, {
-          text: 'AI service is currently unavailable. Try again later.'
+          text: 'AI service is currently unavailable. Try again later.',
+          chatbot_exempt: true
         });
       } catch (e) {}
       return;
@@ -274,14 +400,20 @@ async function handleAutoChatBot(conn, mek) {
       }
       for (let i = 0; i < chunks.length; i++) {
         const label = chunks.length > 1 ? `\n\n(Part ${i + 1}/${chunks.length})` : '';
-        await conn.sendMessage(chatId, { text: chunks[i] + label });
+        await conn.sendMessage(chatId, {
+          text: chunks[i] + label,
+          chatbot_exempt: true
+        });
         await new Promise(r => setTimeout(r, 500));
       }
     } else {
-      await conn.sendMessage(chatId, { text: reply });
+      await conn.sendMessage(chatId, {
+        text: reply,
+        chatbot_exempt: true
+      });
     }
 
-    console.log('[AUTOCHATBOT] Replied to', sender.split('@')[0]);
+    console.log('[AUTOCHATBOT] Replied to', senderNum);
   } catch (error) {
     logger.error(`Auto-ChatBot Error: ${error.message}`);
   }
@@ -310,10 +442,9 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
     const prefix = settings.prefix || '.';
     const sender = mek.key.participant || mek.key.remoteJid;
 
-    // ═════════════════════════════════════════
+    // ─────────────────────────────────────────
     // PRIORITY 1 — SILENT VIEW-ONCE REVEAL (.emoji)
-    // Runs BEFORE anything else — owner only, silent
-    // ═════════════════════════════════════════
+    // ─────────────────────────────────────────
     if (text && text.startsWith(prefix) && text.length > prefix.length) {
       const afterPrefixCheck = text.slice(prefix.length).trim();
 
@@ -323,41 +454,38 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
         const quoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
 
         if (!quoted) {
-          console.log('[SILENTVV] No quoted message — skipping');
+          console.log('[SILENTVV] No quoted message');
           return;
         }
 
         const mediaInfo = extractMedia(quoted);
 
         if (!mediaInfo) {
-          console.log('[SILENTVV] No view-once media found in quoted message');
+          console.log('[SILENTVV] No view-once media');
           return;
         }
 
         const isBotOwnerCheck = owner.isOwner(sender, conn);
         if (!isBotOwnerCheck) {
-          console.log('[SILENTVV] Sender is not owner — skipping');
+          console.log('[SILENTVV] Not owner — skipping');
           return;
         }
 
-        console.log('[SILENTVV] Triggering reveal for', mediaInfo.type);
+        console.log('[SILENTVV] Revealing', mediaInfo.type);
 
-        // Try the plugin first — TRUST its return value
         let revealed = false;
         try {
           const silentvvPlugin = require('./plugins/owner/silentvv');
           if (silentvvPlugin && typeof silentvvPlugin.silentRevealToOwner === 'function') {
             revealed = await silentvvPlugin.silentRevealToOwner(conn, mek, chatId, mediaInfo);
-            console.log('[SILENTVV] Plugin returned:', revealed);
           }
         } catch (e) {
           console.log('[SILENTVV] Plugin failed:', e.message);
           revealed = false;
         }
 
-        // Fallback ONLY if plugin failed
         if (!revealed) {
-          console.log('[SILENTVV] Plugin failed — using internal fallback');
+          console.log('[SILENTVV] Using internal fallback');
           await silentReveal(conn, mek, chatId);
         }
 
@@ -396,7 +524,7 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
     const args = parts.slice(1);
 
     // ─────────────────────────────────────────
-    // EMOJI-ONLY REPLY (no prefix) → SILENT REVEAL
+    // EMOJI-ONLY REPLY → SILENT REVEAL
     // ─────────────────────────────────────────
     if (isEmojiCommand(rawCommand)) {
       const quoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
