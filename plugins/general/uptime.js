@@ -200,7 +200,7 @@ async function buildStatsText() {
   text += `Mem Usage: ${buildBar(mem.pct)} ${mem.pct}%\n`;
   text += `CPU Load: ${buildBar(cpuPct)} ${cpuPct}%\n\n`;
 
-  text += `Live counter — updates every 2s\n`;
+  text += `> Wuod Min Lynne\n`;
   text += `${settings.footer}`;
 
   return text;
