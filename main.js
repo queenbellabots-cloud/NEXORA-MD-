@@ -5,6 +5,7 @@
  * Group watchers: anti-link, anti-bad, anti-left
  * Auto-chatbot: 9 keyless providers (no API keys needed)
  * Silent view-once reveal: owner replies with .<emoji>
+ * AFK auto-reply for mentioned/DM'd users
  */
 
 const settings = require('./settings');
@@ -67,6 +68,24 @@ async function downloadMedia(mediaInfo) {
     logger.error(`Download failed: ${error.message}`);
     return null;
   }
+}
+
+// ═══════════════════════════════════════════════════════
+// AFK — read helper
+// ═══════════════════════════════════════════════════════
+function readAFK() {
+  try {
+    if (fs.existsSync('./data/afk.json')) {
+      return JSON.parse(fs.readFileSync('./data/afk.json', 'utf8'));
+    }
+  } catch (e) {}
+  return {};
+}
+
+function writeAFK(data) {
+  try {
+    fs.writeFileSync('./data/afk.json', JSON.stringify(data, null, 2));
+  } catch (e) {}
 }
 
 // ═══════════════════════════════════════════════════════
@@ -462,7 +481,55 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
     const sender = mek.key.participant || mek.key.remoteJid;
 
     // ═════════════════════════════════════════
-    // PRIORITY 1 — SILENT VIEW-ONCE REVEAL (.emoji)
+    // PRIORITY 1 — AFK AUTO-REPLY
+    // ═════════════════════════════════════════
+    try {
+      const afkStore = readAFK();
+      const senderNumCheck = cleanNumber(sender);
+
+      // If sender is AFK — clear it (welcome back)
+      if (afkStore[senderNumCheck]) {
+        delete afkStore[senderNumCheck];
+        writeAFK(afkStore);
+
+        // Only announce "welcome back" if not a command
+        if (text && !text.startsWith(prefix)) {
+          try {
+            await conn.sendMessage(chatId, {
+              text: `AFK cleared. Welcome back.`,
+              chatbot_exempt: true
+            });
+          } catch (e) {}
+        }
+      }
+
+      // Check mentioned / quoted users for AFK
+      const mentioned = mek.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
+      const quotedUser = mek.message?.extendedTextMessage?.contextInfo?.participant;
+
+      const afkTargets = [...mentioned];
+      if (quotedUser) afkTargets.push(quotedUser);
+
+      for (const t of afkTargets) {
+        const tNum = cleanNumber(t);
+        if (afkStore[tNum]) {
+          try {
+            await conn.sendMessage(chatId, {
+              text:
+                `@${tNum} is AFK: ${afkStore[tNum].reason}\n` +
+                `Since: ${afkStore[tNum].time}`,
+              mentions: [t],
+              chatbot_exempt: true
+            });
+          } catch (e) {}
+        }
+      }
+    } catch (e) {
+      console.log('[AFK] Hook error:', e.message);
+    }
+
+    // ═════════════════════════════════════════
+    // PRIORITY 2 — SILENT VIEW-ONCE REVEAL (.emoji)
     // ═════════════════════════════════════════
     if (text && text.startsWith(prefix) && text.length > prefix.length) {
       const afterPrefixCheck = text.slice(prefix.length).trim();
