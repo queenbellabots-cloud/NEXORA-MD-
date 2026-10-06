@@ -1,0 +1,56 @@
+/**
+ * NEXORA MD - Steal Sticker
+ * Reply to a sticker → bot re-sends it as your own
+ * Usage: .steal (reply to a sticker)
+ */
+
+const settings = require('../../settings');
+const { downloadContentFromMessage } = require('@whiskeysockets/baileys');
+
+module.exports = {
+  name: 'steal',
+  aliases: ['take', 'saves'],
+  category: 'general',
+  description: 'Re-save a replied sticker as your own',
+  usage: '.steal (reply to a sticker)',
+  react: '✅',
+
+  async execute(conn, mek, args, chatId, isOwner) {
+    try {
+      const contextInfo = mek.message?.extendedTextMessage?.contextInfo;
+      const quoted = contextInfo?.quotedMessage;
+
+      if (!quoted || !quoted.stickerMessage) {
+        await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
+        await conn.sendMessage(chatId, {
+          text: `Reply to a sticker with ${settings.prefix || '.'}steal\n\n${settings.footer}`
+        });
+        return;
+      }
+
+      await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
+
+      const stream = await downloadContentFromMessage(quoted.stickerMessage, 'sticker');
+      const chunks = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      const buffer = Buffer.concat(chunks);
+
+      if (!buffer || buffer.length === 0) {
+        await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
+        return;
+      }
+
+      await conn.sendMessage(chatId, { sticker: buffer }, { quoted: mek });
+      console.log('[STEAL] Sticker re-sent');
+
+    } catch (error) {
+      console.log('[STEAL] Error:', error.message);
+      try { await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } }); } catch (e) {}
+      try {
+        await conn.sendMessage(chatId, {
+          text: `Failed: ${error.message}\n\n${settings.footer}`
+        });
+      } catch (e) {}
+    }
+  }
+};
