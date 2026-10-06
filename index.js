@@ -1,5 +1,6 @@
 /**
  * NEXORA MD - WhatsApp Bot
+ * Optimized: no per-chat presence spam, silent global keep-alive
  * Consolidated state loaders + all handlers
  * Owner: paired number (from creds.json)
  */
@@ -37,7 +38,6 @@ try {
 
 const { handleMessages, handleGroupParticipantUpdate } = require('./main');
 const PhoneNumber = require('awesome-phonenumber');
-const { sleep } = require('./lib/myfunc');
 const mode = require('./lib/mode');
 const owner = require('./lib/owner');
 const logger = require('./lib/logger');
@@ -103,55 +103,50 @@ try {
   global.antiBlock = false;
 }
 
-// Always online
+// Always online (default OFF to prevent spam)
 try {
   if (fs.existsSync('./data/alwaysonline.json')) {
     const aoData = JSON.parse(fs.readFileSync('./data/alwaysonline.json', 'utf8'));
-    global.alwaysOnline = aoData.enabled !== false;
+    global.alwaysOnline = aoData.enabled === true;
   } else {
-    global.alwaysOnline = settings.alwaysOnline;
+    global.alwaysOnline = false;
   }
 } catch (e) {
-  global.alwaysOnline = settings.alwaysOnline;
+  global.alwaysOnline = false;
 }
 
-// Auto-typing
+// Auto-typing (default OFF)
 try {
   if (fs.existsSync('./data/autotyping.json')) {
     const atData = JSON.parse(fs.readFileSync('./data/autotyping.json', 'utf8'));
     global.autoTyping = {
-      enabled: atData.enabled !== false,
-      dm: atData.dm !== false,
-      groups: atData.groups !== false,
-      status: atData.status !== false
+      enabled: atData.enabled === true,
+      dm: atData.dm === true,
+      groups: atData.groups === true,
+      status: atData.status === true
     };
   } else {
-    global.autoTyping = {
-      enabled: settings.autoTyping,
-      dm: true,
-      groups: true,
-      status: true
-    };
+    global.autoTyping = { enabled: false, dm: false, groups: false, status: false };
   }
 } catch (e) {
-  global.autoTyping = { enabled: settings.autoTyping, dm: true, groups: true, status: true };
+  global.autoTyping = { enabled: false, dm: false, groups: false, status: false };
 }
 
-// Auto-recording
+// Auto-recording (default OFF)
 try {
   if (fs.existsSync('./data/autorecording.json')) {
     const arData = JSON.parse(fs.readFileSync('./data/autorecording.json', 'utf8'));
     global.autoRecording = {
       enabled: arData.enabled === true,
-      dm: arData.dm !== false,
-      groups: arData.groups !== false,
-      status: arData.status !== false
+      dm: arData.dm === true,
+      groups: arData.groups === true,
+      status: arData.status === true
     };
   } else {
-    global.autoRecording = { enabled: false, dm: true, groups: true, status: true };
+    global.autoRecording = { enabled: false, dm: false, groups: false, status: false };
   }
 } catch (e) {
-  global.autoRecording = { enabled: false, dm: true, groups: true, status: true };
+  global.autoRecording = { enabled: false, dm: false, groups: false, status: false };
 }
 
 // Auto-chatbot
@@ -160,10 +155,10 @@ try {
     const acData = JSON.parse(fs.readFileSync('./data/autochatbot.json', 'utf8'));
     global.autoChatBot = acData.enabled === true;
   } else {
-    global.autoChatBot = settings.autoChatBot || false;
+    global.autoChatBot = settings.autoChatBot === true;
   }
 } catch (e) {
-  global.autoChatBot = settings.autoChatBot || false;
+  global.autoChatBot = settings.autoChatBot === true;
 }
 
 // Auto-status flags
@@ -172,19 +167,16 @@ try {
     const sd = JSON.parse(fs.readFileSync('./data/status.json', 'utf8'));
     global.autoStatusFlags = {
       seen: sd.view !== false,
-      react: sd.react !== false
+      react: sd.react === true
     };
   } else {
     global.autoStatusFlags = {
-      seen: settings.autoStatusSeen,
-      react: settings.autoStatusReact
+      seen: settings.autoStatusSeen === true,
+      react: settings.autoStatusReact === true
     };
   }
 } catch (e) {
-  global.autoStatusFlags = {
-    seen: settings.autoStatusSeen,
-    react: settings.autoStatusReact
-  };
+  global.autoStatusFlags = { seen: false, react: false };
 }
 
 // Ghost mode
@@ -193,10 +185,10 @@ try {
     const gData = JSON.parse(fs.readFileSync('./data/ghost.json', 'utf8'));
     global.ghostMode = gData.enabled === true;
   } else {
-    global.ghostMode = settings.ghostMode || false;
+    global.ghostMode = settings.ghostMode === true;
   }
 } catch (e) {
-  global.ghostMode = settings.ghostMode || false;
+  global.ghostMode = false;
 }
 
 // Anti-call
@@ -257,9 +249,7 @@ function loadReactionEmojis() {
         return data.emojis;
       }
     }
-  } catch (e) {
-    console.log('[NEXORA] Emoji load failed:', e.message);
-  }
+  } catch (e) {}
   return getDefaultReactionEmojis();
 }
 
@@ -309,6 +299,9 @@ function loadCommands() {
   logger.success(`Loaded ${loaded} commands.`);
 }
 
+// ═══════════════════════════════════════════════════════
+// STORE + CACHE
+// ═══════════════════════════════════════════════════════
 const store = require('./lib/lightweight_store');
 store.readFromFile();
 setInterval(() => store.writeToFile(), settings.storeWriteInterval || 10000);
@@ -316,17 +309,14 @@ setInterval(() => store.writeToFile(), settings.storeWriteInterval || 10000);
 const processedMessages = new Set();
 setInterval(() => processedMessages.clear(), 3 * 60 * 1000);
 
-setInterval(() => {
-  if (global.gc) global.gc();
-}, 60000);
-
+// Memory watchdog (less aggressive)
 setInterval(() => {
   const used = process.memoryUsage().rss / 1024 / 1024;
-  if (used > 450) {
+  if (used > 600) {
     logger.warn('RAM too high, restarting...');
     process.exit(1);
   }
-}, 60000);
+}, 120000);
 
 const CHANNEL_ID = settings.channelId;
 const CHANNEL_REACTIONS = settings.channelReactions;
@@ -391,7 +381,7 @@ async function startNexora() {
       msgRetryCounterCache,
       defaultQueryTimeoutMs: 60000,
       connectTimeoutMs: 60000,
-      keepAliveIntervalMs: 10000,
+      keepAliveIntervalMs: 30000,   // ← raised from 10s to 30s
       emitOwnEvents: false,
       fireInitQueries: false,
       retryRequestDelayMs: 250,
@@ -502,6 +492,7 @@ async function startNexora() {
 
         if (mek.key.id.startsWith('BAE5') && mek.key.id.length === 16) return;
 
+        // Fire message handler — non-blocking
         setImmediate(() => {
           handleMessages(Nexora, chatUpdate, true).catch(err => {
             if (!err.message?.includes('rate-overlimit')) {
@@ -510,6 +501,7 @@ async function startNexora() {
           });
         });
 
+        // ─── AUTO-READ (only if ghost OFF) ───
         if (!global.ghostMode) {
           setImmediate(async () => {
             try {
@@ -523,33 +515,33 @@ async function startNexora() {
           });
         }
 
-        // ─── AUTO-TYPING ───
+        // ─── AUTO-TYPING (strict) ───
         try {
-          if (global.autoTyping && global.autoTyping.enabled && !mek.key.fromMe) {
+          if (global.autoTyping && global.autoTyping.enabled === true && !mek.key.fromMe) {
             const isGroup = chatId.endsWith('@g.us');
             const isStatus = chatId === 'status@broadcast';
 
             let send = false;
-            if (isStatus && global.autoTyping.status) send = true;
-            else if (isGroup && global.autoTyping.groups) send = true;
-            else if (!isGroup && !isStatus && global.autoTyping.dm) send = true;
+            if (isStatus && global.autoTyping.status === true) send = true;
+            else if (isGroup && global.autoTyping.groups === true) send = true;
+            else if (!isGroup && !isStatus && global.autoTyping.dm === true) send = true;
 
             if (send) {
-              await Nexora.sendPresenceUpdate(global.customStatus || 'composing', chatId);
+              await Nexora.sendPresenceUpdate('composing', chatId);
             }
           }
         } catch (error) {}
 
-        // ─── AUTO-RECORDING ───
+        // ─── AUTO-RECORDING (strict) ───
         try {
-          if (global.autoRecording && global.autoRecording.enabled && !mek.key.fromMe) {
+          if (global.autoRecording && global.autoRecording.enabled === true && !mek.key.fromMe) {
             const isGroup = chatId.endsWith('@g.us');
             const isStatus = chatId === 'status@broadcast';
 
             let send = false;
-            if (isStatus && global.autoRecording.status) send = true;
-            else if (isGroup && global.autoRecording.groups) send = true;
-            else if (!isGroup && !isStatus && global.autoRecording.dm) send = true;
+            if (isStatus && global.autoRecording.status === true) send = true;
+            else if (isGroup && global.autoRecording.groups === true) send = true;
+            else if (!isGroup && !isStatus && global.autoRecording.dm === true) send = true;
 
             if (send) {
               await Nexora.sendPresenceUpdate('recording', chatId);
@@ -557,12 +549,7 @@ async function startNexora() {
           }
         } catch (error) {}
 
-        // ─── ALWAYS ONLINE ───
-        try {
-          if (global.alwaysOnline && !chatId.endsWith('@g.us')) {
-            await Nexora.sendPresenceUpdate('available', chatId);
-          }
-        } catch (error) {}
+        // NOTE: NO per-chat alwaysOnline here — global keep-alive only
 
         // ─── AUTO STATUS VIEW + REACT ───
         try {
@@ -571,16 +558,14 @@ async function startNexora() {
 
             REACTION_EMOJIS = loadReactionEmojis();
 
-            const autoView = global.autoStatusFlags?.seen !== undefined ? global.autoStatusFlags.seen : true;
-            const autoReact = global.autoStatusFlags?.react !== undefined ? global.autoStatusFlags.react : true;
+            const autoView = global.autoStatusFlags?.seen === true;
+            const autoReact = global.autoStatusFlags?.react === true;
 
             if (autoView) {
               try {
                 await Nexora.readMessages([mek.key]);
                 console.log('[STATUS] Viewed from:', (mek.key.participant || mek.key.remoteJid).split('@')[0]);
-              } catch (e) {
-                console.log('[STATUS] View failed:', e.message);
-              }
+              } catch (e) {}
             }
 
             if (autoReact) {
@@ -616,14 +601,10 @@ async function startNexora() {
                     { statusJidList: jidList }
                   );
                 }
-              } catch (e) {
-                console.log('[STATUS] React failed:', e.message);
-              }
+              } catch (e) {}
             }
           }
-        } catch (error) {
-          console.log('[STATUS] Block error:', error.message);
-        }
+        } catch (error) {}
 
         // ─── CHANNEL REACTIONS ───
         try {
@@ -659,7 +640,6 @@ async function startNexora() {
           // ─── ANTI-DELETE ───
           if (global.antiDelete && protocol && protocol.type === 0) {
             const key = protocol.key;
-            console.log('[ANTI-DELETE] Delete detected for:', key.id);
 
             let originalMsg = await store.loadMessage(key.remoteJid, key.id);
 
@@ -670,10 +650,7 @@ async function startNexora() {
               } catch (e) {}
             }
 
-            if (!originalMsg) {
-              console.log('[ANTI-DELETE] Original message not found in store');
-              continue;
-            }
+            if (!originalMsg) continue;
 
             const sender = key.participant || key.remoteJid;
             const senderName = await Nexora.getName(sender) || sender.split('@')[0];
@@ -695,7 +672,6 @@ RECOVERED MESSAGE:`;
 
             try {
               await Nexora.copyNForward(ownerJid, originalMsg, true);
-              console.log('[ANTI-DELETE] Forwarded successfully');
             } catch (forwardError) {
               if (originalMsg.message?.conversation) {
                 await Nexora.sendMessage(ownerJid, {
@@ -716,8 +692,6 @@ RECOVERED MESSAGE:`;
             const chatId = key.remoteJid;
             if (!chatId || chatId.endsWith('@g.us')) continue;
             if (chatId === 'status@broadcast' || chatId.includes('@newsletter')) continue;
-
-            console.log('[ANTI-EDIT] Edit detected in', chatId.split('@')[0]);
 
             let originalMsg = await store.loadMessage(chatId, key.id);
 
@@ -762,13 +736,12 @@ RECOVERED MESSAGE:`;
     });
 
     // ─────────────────────────────────────────
-    // ANTI-CALL (reject + polite warning)
+    // ANTI-CALL
     // ─────────────────────────────────────────
     Nexora.ev.on('call', async (calls) => {
       try {
         if (!global.antiCall) return;
 
-        // Load call-blocked list
         let blockedList = [];
         try {
           if (fs.existsSync('./data/callblocked.json')) {
@@ -781,39 +754,25 @@ RECOVERED MESSAGE:`;
 
           const callerNum = String(call.from).split('@')[0].split(':')[0].replace(/[^0-9]/g, '');
 
-          // ─── REJECT THE CALL IMMEDIATELY ───
           try {
             if (typeof Nexora.rejectCall === 'function' && call.id) {
-              // Try 2-arg signature first (newer Baileys)
               try {
                 await Nexora.rejectCall(call.id, call.from);
-                console.log('[ANTICALL] Call rejected (2-arg):', callerNum);
               } catch (e1) {
-                // Fallback to 1-arg signature
                 try {
                   await Nexora.rejectCall(call.id);
-                  console.log('[ANTICALL] Call rejected (1-arg):', callerNum);
-                } catch (e2) {
-                  console.log('[ANTICALL] rejectCall failed:', e2.message);
-                }
+                } catch (e2) {}
               }
-            } else {
-              console.log('[ANTICALL] rejectCall not available on this Baileys version');
             }
-          } catch (rejectErr) {
-            console.log('[ANTICALL] Reject error:', rejectErr.message);
-          }
+          } catch (rejectErr) {}
 
-          // If in callblock list → block silently
           if (blockedList.some(b => b.number === callerNum)) {
             try {
               await Nexora.updateBlockStatus(call.from, 'block');
-              console.log('[ANTICALL] Blocked (callblock list):', callerNum);
             } catch (e) {}
             continue;
           }
 
-          // Polite warning message
           const politeMsg =
             `Hi. This number is a WhatsApp bot and cannot receive voice or video calls.\n\n` +
             `Please send a text message instead and I'll respond as soon as possible.\n\n` +
@@ -821,12 +780,8 @@ RECOVERED MESSAGE:`;
 
           try {
             await Nexora.sendMessage(call.from, { text: politeMsg });
-            console.log('[ANTICALL] Polite warning sent to:', callerNum);
-          } catch (e) {
-            console.log('[ANTICALL] Message failed:', e.message);
-          }
+          } catch (e) {}
 
-          // Log the call
           try {
             const logPath = './data/call_log.json';
             let log = [];
@@ -848,22 +803,6 @@ RECOVERED MESSAGE:`;
 
             if (log.length > 500) log = log.slice(-500);
             fs.writeFileSync(logPath, JSON.stringify(log, null, 2));
-          } catch (e) {}
-
-          // Notify owner
-          try {
-            const ownerNum = (owner.getPairedNumber && owner.getPairedNumber()) || settings.ownerNumber;
-            if (ownerNum) {
-              const ownerJid = ownerNum.includes('@') ? ownerNum : ownerNum + '@s.whatsapp.net';
-              await Nexora.sendMessage(ownerJid, {
-                text:
-                  `CALL REJECTED\n\n` +
-                  `Number: ${callerNum}\n` +
-                  `Time: ${new Date().toLocaleString()}\n\n` +
-                  `Polite warning sent. Not blocked.\n\n` +
-                  `${settings.footer}`
-              });
-            }
           } catch (e) {}
         }
       } catch (error) {
@@ -956,15 +895,26 @@ RECOVERED MESSAGE:`;
           }
         } catch (e) {}
 
+        // ─── ALWAYS ONLINE (silent global only) ───
         try {
-          if (global.alwaysOnline) {
+          if (global.alwaysOnline === true) {
             await Nexora.sendPresenceUpdate('available');
-          }
-        } catch (e) {}
 
-        // ─── GHOST MODE (apply privacy on boot) ───
+            setInterval(async () => {
+              try {
+                await Nexora.sendPresenceUpdate('available');
+              } catch (e) {}
+            }, 4 * 60 * 1000);
+
+            logger.success('Always online enabled (global only)');
+          }
+        } catch (e) {
+          console.log('[ALWAYS ONLINE] Failed:', e.message);
+        }
+
+        // ─── GHOST MODE ───
         try {
-          if (global.ghostMode) {
+          if (global.ghostMode === true) {
             await Nexora.updateReadReceiptsPrivacy('none');
             logger.success('Ghost mode applied (read receipts off)');
           }
@@ -978,9 +928,7 @@ RECOVERED MESSAGE:`;
           if (autobio && typeof autobio.startTimer === 'function') {
             autobio.startTimer(Nexora);
           }
-        } catch (e) {
-          console.log('[AUTOBIO] Timer start failed:', e.message);
-        }
+        } catch (e) {}
 
         // ─── WELCOME MESSAGE ───
         setTimeout(async () => {
