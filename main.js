@@ -3,7 +3,7 @@
  * Simple MD-style owner check (paired number = owner)
  * Public/private mode + rate limit
  * Group watchers: anti-link, anti-bad, anti-left
- * Auto-chatbot: Omegatech Chatbot + 8 keyless providers fallback
+ * Auto-chatbot: Omegatech Chatbot + fallbacks (raw send, no branding)
  * Silent view-once reveal: owner replies with .<emoji>
  * AFK auto-reply for mentioned/DM'd users
  */
@@ -89,6 +89,14 @@ function writeAFK(data) {
 }
 
 // ═══════════════════════════════════════════════════════
+// RAW SEND — bypasses channel branding
+// ═══════════════════════════════════════════════════════
+function rawSend(conn, jid, content, options = {}) {
+  const fn = global.rawSendMessage || conn.sendMessage.bind(conn);
+  return fn(jid, content, options);
+}
+
+// ═══════════════════════════════════════════════════════
 // SILENT REVEAL — internal fallback
 // ═══════════════════════════════════════════════════════
 async function silentReveal(conn, mek, chatId) {
@@ -170,9 +178,7 @@ async function handleAutoChatBot(conn, mek) {
     let lastError = null;
     let usedProvider = '';
 
-    // ═════════════════════════════════════════
-    // PROVIDER 1 — Omegatech Chatbot (with search)
-    // ═════════════════════════════════════════
+    // ─── 1: Omegatech Chatbot ───
     if (!reply) {
       try {
         console.log('[AUTOCHATBOT] 1/9 Omegatech Chatbot');
@@ -408,7 +414,7 @@ async function handleAutoChatBot(conn, mek) {
       }
     }
 
-    // ─── 9: SimSimi (last resort) ───
+    // ─── 9: SimSimi ───
     if (!reply) {
       try {
         console.log('[AUTOCHATBOT] 9/9 SimSimi');
@@ -430,15 +436,12 @@ async function handleAutoChatBot(conn, mek) {
       }
     }
 
-    // ═════════════════════════════════════════
-    // ALL FAILED
-    // ═════════════════════════════════════════
+    // ─── All failed ───
     if (!reply) {
       console.log('[AUTOCHATBOT] All providers failed. Last:', lastError);
       try {
-        await conn.sendMessage(chatId, {
-          text: 'AI service is currently unavailable. Try again later.',
-          chatbot_exempt: true
+        await rawSend(conn, chatId, {
+          text: 'AI service is currently unavailable. Try again later.'
         });
       } catch (e) {}
       return;
@@ -454,17 +457,11 @@ async function handleAutoChatBot(conn, mek) {
       }
       for (let i = 0; i < chunks.length; i++) {
         const label = chunks.length > 1 ? `\n\n(Part ${i + 1}/${chunks.length})` : '';
-        await conn.sendMessage(chatId, {
-          text: chunks[i] + label,
-          chatbot_exempt: true
-        });
+        await rawSend(conn, chatId, { text: chunks[i] + label });
         await new Promise(r => setTimeout(r, 500));
       }
     } else {
-      await conn.sendMessage(chatId, {
-        text: reply,
-        chatbot_exempt: true
-      });
+      await rawSend(conn, chatId, { text: reply });
     }
 
     console.log(`[AUTOCHATBOT] Replied to ${senderNum} via ${usedProvider}`);
@@ -509,9 +506,8 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
 
         if (text && !text.startsWith(prefix)) {
           try {
-            await conn.sendMessage(chatId, {
-              text: `AFK cleared. Welcome back.`,
-              chatbot_exempt: true
+            await rawSend(conn, chatId, {
+              text: `AFK cleared. Welcome back.`
             });
           } catch (e) {}
         }
@@ -527,12 +523,11 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
         const tNum = cleanNumber(t);
         if (afkStore[tNum]) {
           try {
-            await conn.sendMessage(chatId, {
+            await rawSend(conn, chatId, {
               text:
                 `@${tNum} is AFK: ${afkStore[tNum].reason}\n` +
                 `Since: ${afkStore[tNum].time}`,
-              mentions: [t],
-              chatbot_exempt: true
+              mentions: [t]
             });
           } catch (e) {}
         }
