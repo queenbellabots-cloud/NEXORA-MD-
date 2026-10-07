@@ -25,41 +25,40 @@ module.exports = {
 ║   ✦  𝐍 𝐄 𝐗 𝐎 𝐑 𝐀  ✦   
 ╚══════════════════════════╝
 
-┏━━━〔 ⚡ SYSTEM INFO 〕━━━┓
-┃
-┃ ╭─❖ 👤 *Owner*
-┃ │➤ ${settings.botOwner}
-┃ ╰──────────────
-┃
-┃ ╭─❖ 🛠️ *Developer*
-┃ │➤ ${settings.developerName}
-┃ ╰──────────────
-┃
-┃ ╭─❖ 🔰 *Prefix*
-┃ │➤ ${settings.prefix}
-┃ ╰──────────────
-┃
-┃ ╭─❖ 🌐 *Mode*
-┃ │➤ ${currentMode}
-┃ ╰──────────────
-┃
-┃ ╭─❖ 📦 *Commands*
-┃ │➤ ${totalCommands}
-┃ ╰──────────────
-┃
-┃ ╭─❖ ⏱️ *Uptime*
-┃ │➤ ${uptime}
-┃ ╰──────────────
-┃
-┃ ╭─❖ 💾 *Memory*
-┃ │➤ ${mem}
-┃ ╰──────────────
-┃
-┃ ╭─❖ 🕐 *Time Zone*
-┃ │➤ ${settings.timeZone}
-┃ ╰──────────────
-┃
-┗━━━━━━━━━━━━━━━━━━━━━━┛
+╠═════⚡ SYSTEM INFO
+║
+║ ╔═❖ 👤 *Owner*
+║ ║➤ ${settings.botOwner}
+╠══════
+║
+║ ╔═❖ 🛠️ *Developer*
+║ ║➤ ${settings.developerName}
+╠══════
+║
+║ ╔═❖ 🔰 *Prefix*
+║ ║➤ ${settings.prefix}
+╠══════
+║
+║ ╔═❖ 🌐 *Mode*
+║ ║➤ ${currentMode}
+╠══════
+║
+║ ╔═❖ 📦 *Commands*
+║ ║➤ ${totalCommands}
+╠══════
+║
+║ ╔═❖ ⏱️ *Uptime*
+║ ║➤ ${uptime}
+╠══════
+║
+║ ╔═❖ 💾 *Memory*
+║ ║➤ ${mem}
+╠══════
+║
+║ ╔═❖ 🕐 *Time Zone*
+║ ║➤ ${settings.timeZone}
+╠══════
+╚═══════════════════════╝
 
       _${settings.footer}_ 
 `;
