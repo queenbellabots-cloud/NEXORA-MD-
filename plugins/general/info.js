@@ -2,6 +2,8 @@ const settings = require('../../settings');
 const { formatTime, formatBytes } = require('../../lib/myfunc');
 const startTime = Date.now();
 
+const BOT_IMAGE = 'https://imagetourl.cloud/jey865he.jpg';
+
 module.exports = {
   name: 'info',
   aliases: ['botinfo', 'status'],
@@ -17,50 +19,54 @@ module.exports = {
     const totalCommands = global.commands ? global.commands.size : 0;
     const currentMode = global.botMode ? global.botMode.toUpperCase() : 'PUBLIC';
 
-    const text = `
-╔═══════════════════╗
-║ ✦  𝐍 𝐄 𝐗 𝐎 𝐑 𝐀  ✦   
-╚═══════════════════╝
+    const caption = `
+╔══════════════════════════════╗
+║   ✦  𝐍 𝐄 𝐗 𝐎 𝐑 𝐀  ✦   ║
+╚══════════════════════════════╝
 
-┏━━━〔 ⚡ SYSTEM INFO 〕
+┏━━━〔 ⚡ SYSTEM INFO 〕━━━┓
 ┃
-┃ ╭─❖ *Owner*
+┃ ╭─❖ 👑 *Owner*
 ┃ │➤ ${settings.botOwner}
 ┃ ╰──────────────
 ┃
-┃ ╭─❖ *Developer*
+┃ ╭─❖ 🛠️ *Developer*
 ┃ │➤ ${settings.developerName}
 ┃ ╰──────────────
 ┃
-┃ ╭─❖ *Prefix*
+┃ ╭─❖ 🔰 *Prefix*
 ┃ │➤ ${settings.prefix}
 ┃ ╰──────────────
 ┃
-┃ ╭─❖ *Mode*
+┃ ╭─❖ 🌐 *Mode*
 ┃ │➤ ${currentMode}
 ┃ ╰──────────────
 ┃
-┃ ╭─❖ *Commands*
+┃ ╭─❖ 📦 *Commands*
 ┃ │➤ ${totalCommands}
 ┃ ╰──────────────
 ┃
-┃ ╭─❖ *Uptime*
+┃ ╭─❖ ⏱️ *Uptime*
 ┃ │➤ ${uptime}
 ┃ ╰──────────────
 ┃
-┃ ╭─❖ *Memory*
+┃ ╭─❖ 💾 *Memory*
 ┃ │➤ ${mem}
 ┃ ╰──────────────
 ┃
-┃ ╭─❖ *Time Zone*
+┃ ╭─❖ 🕐 *Time Zone*
 ┃ │➤ ${settings.timeZone}
 ┃ ╰──────────────
 ┃
+┗━━━━━━━━━━━━━━━━━━━━━━┛
 
-
-      _${settings.footer}_ 
+     ✨ _${settings.footer}_ ✨
 `;
 
-    await conn.sendMessage(chatId, { text });
+    await conn.sendMessage(chatId, {
+      image: { url: BOT_IMAGE },
+      caption,
+      mimetype: 'image/jpeg'
+    });
   }
 };
