@@ -3,7 +3,7 @@
  * Simple MD-style owner check (paired number = owner)
  * Public/private mode + rate limit
  * Group watchers: anti-link, anti-bad, anti-left
- * Auto-chatbot: 9 keyless providers (no API keys needed)
+ * Auto-chatbot: Omegatech Chatbot + 8 keyless providers fallback
  * Silent view-once reveal: owner replies with .<emoji>
  * AFK auto-reply for mentioned/DM'd users
  */
@@ -71,7 +71,7 @@ async function downloadMedia(mediaInfo) {
 }
 
 // ═══════════════════════════════════════════════════════
-// AFK — read helper
+// AFK HELPERS
 // ═══════════════════════════════════════════════════════
 function readAFK() {
   try {
@@ -134,7 +134,7 @@ ${settings.footer}`;
 }
 
 // ═══════════════════════════════════════════════════════
-// AUTO CHATBOT — 9 keyless providers
+// AUTO CHATBOT — Omegatech Chatbot + fallbacks
 // ═══════════════════════════════════════════════════════
 async function handleAutoChatBot(conn, mek) {
   try {
@@ -170,10 +170,49 @@ async function handleAutoChatBot(conn, mek) {
     let lastError = null;
     let usedProvider = '';
 
-    // ─── 1: GPT-5.5 ───
+    // ═════════════════════════════════════════
+    // PROVIDER 1 — Omegatech Chatbot (with search)
+    // ═════════════════════════════════════════
     if (!reply) {
       try {
-        console.log('[AUTOCHATBOT] 1/9 GPT-5.5');
+        console.log('[AUTOCHATBOT] 1/9 Omegatech Chatbot');
+
+        const url = `https://api.omegatech.app/api/ai/Chatbot?action=chat&message=${encodeURIComponent(text)}&needSearch=true`;
+
+        const res = await axios.get(url, {
+          headers: { 'Accept': 'application/json' },
+          timeout: 45000
+        });
+
+        const data = res.data;
+        const candidate =
+          data?.reply ||
+          data?.response ||
+          data?.message ||
+          data?.result ||
+          data?.answer ||
+          data?.data?.reply ||
+          data?.data?.response ||
+          data?.data?.message ||
+          (typeof data === 'string' ? data : null);
+
+        if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
+          if (candidate.trim() !== text.trim() || data?.success === true) {
+            reply = candidate.trim();
+            usedProvider = 'Omegatech';
+            console.log('[AUTOCHATBOT] ✅ Omegatech Chatbot');
+          }
+        }
+      } catch (e) {
+        lastError = e.message;
+        console.log('[AUTOCHATBOT] ❌ Omegatech Chatbot:', e.message);
+      }
+    }
+
+    // ─── 2: GPT-5.5 ───
+    if (!reply) {
+      try {
+        console.log('[AUTOCHATBOT] 2/9 GPT-5.5');
 
         const res = await axios.post('https://apis.davidcyril.name.ng/ai/gpt-5.5', {
           message: text, name: pushName
@@ -201,10 +240,10 @@ async function handleAutoChatBot(conn, mek) {
       }
     }
 
-    // ─── 2: DeepSeek ───
+    // ─── 3: DeepSeek ───
     if (!reply) {
       try {
-        console.log('[AUTOCHATBOT] 2/9 DeepSeek');
+        console.log('[AUTOCHATBOT] 3/9 DeepSeek');
 
         const res = await axios.post('https://apis.davidcyril.name.ng/ai/deepseek-v3.2-thinking', {
           message: text, name: pushName
@@ -233,10 +272,10 @@ async function handleAutoChatBot(conn, mek) {
       }
     }
 
-    // ─── 3: Blackbox ───
+    // ─── 4: Blackbox ───
     if (!reply) {
       try {
-        console.log('[AUTOCHATBOT] 3/9 Blackbox');
+        console.log('[AUTOCHATBOT] 4/9 Blackbox');
 
         const res = await axios.post('https://apis.davidcyril.name.ng/blackbox', {
           message: text, name: pushName
@@ -264,10 +303,10 @@ async function handleAutoChatBot(conn, mek) {
       }
     }
 
-    // ─── 4: Kilo Gateway ───
+    // ─── 5: Kilo Gateway ───
     if (!reply) {
       try {
-        console.log('[AUTOCHATBOT] 4/9 Kilo Gateway');
+        console.log('[AUTOCHATBOT] 5/9 Kilo Gateway');
 
         const res = await axios.post('https://api.kilo.ai/api/gateway/chat/completions', {
           model: 'kilo-auto/free',
@@ -293,10 +332,10 @@ async function handleAutoChatBot(conn, mek) {
       }
     }
 
-    // ─── 5: KeylessAI (Thryx) ───
+    // ─── 6: KeylessAI (Thryx) ───
     if (!reply) {
       try {
-        console.log('[AUTOCHATBOT] 5/9 KeylessAI');
+        console.log('[AUTOCHATBOT] 6/9 KeylessAI');
 
         const res = await axios.post('https://keylessai.thryx.workers.dev/v1/chat/completions', {
           model: 'gpt-4o',
@@ -319,10 +358,10 @@ async function handleAutoChatBot(conn, mek) {
       }
     }
 
-    // ─── 6: GPT-AI v1 ───
+    // ─── 7: GPT-AI v1 ───
     if (!reply) {
       try {
-        console.log('[AUTOCHATBOT] 6/9 GPT-AI v1');
+        console.log('[AUTOCHATBOT] 7/9 GPT-AI v1');
 
         const res = await axios.post('https://gpt-ai-olive.vercel.app/chat/v1', {
           userMessage: text
@@ -344,10 +383,10 @@ async function handleAutoChatBot(conn, mek) {
       }
     }
 
-    // ─── 7: GPT-AI v2 ───
+    // ─── 8: GPT-AI v2 ───
     if (!reply) {
       try {
-        console.log('[AUTOCHATBOT] 7/9 GPT-AI v2');
+        console.log('[AUTOCHATBOT] 8/9 GPT-AI v2');
 
         const res = await axios.post('https://gpt-ai-olive.vercel.app/chat/v2', {
           userMessage: text
@@ -369,32 +408,7 @@ async function handleAutoChatBot(conn, mek) {
       }
     }
 
-    // ─── 8: Omegatech ───
-    if (!reply) {
-      try {
-        console.log('[AUTOCHATBOT] 8/9 Omegatech');
-
-        const res = await axios.post('https://api.omegatech.xyz/ai/chat', {
-          message: text, sessionId: 'nexora_' + senderNum, name: pushName
-        }, {
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 30000
-        });
-
-        const candidate = res.data?.data?.reply || res.data?.reply || res.data?.response;
-
-        if (candidate && typeof candidate === 'string' && candidate.trim().length > 0) {
-          reply = candidate.trim();
-          usedProvider = 'Omegatech';
-          console.log('[AUTOCHATBOT] ✅ Omegatech');
-        }
-      } catch (e) {
-        lastError = e.message;
-        console.log('[AUTOCHATBOT] ❌ Omegatech:', e.message);
-      }
-    }
-
-    // ─── 9: SimSimi ───
+    // ─── 9: SimSimi (last resort) ───
     if (!reply) {
       try {
         console.log('[AUTOCHATBOT] 9/9 SimSimi');
@@ -416,7 +430,9 @@ async function handleAutoChatBot(conn, mek) {
       }
     }
 
-    // ─── All failed ───
+    // ═════════════════════════════════════════
+    // ALL FAILED
+    // ═════════════════════════════════════════
     if (!reply) {
       console.log('[AUTOCHATBOT] All providers failed. Last:', lastError);
       try {
@@ -487,12 +503,10 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
       const afkStore = readAFK();
       const senderNumCheck = cleanNumber(sender);
 
-      // If sender is AFK — clear it (welcome back)
       if (afkStore[senderNumCheck]) {
         delete afkStore[senderNumCheck];
         writeAFK(afkStore);
 
-        // Only announce "welcome back" if not a command
         if (text && !text.startsWith(prefix)) {
           try {
             await conn.sendMessage(chatId, {
@@ -503,7 +517,6 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
         }
       }
 
-      // Check mentioned / quoted users for AFK
       const mentioned = mek.message?.extendedTextMessage?.contextInfo?.mentionedJid || [];
       const quotedUser = mek.message?.extendedTextMessage?.contextInfo?.participant;
 
@@ -609,9 +622,6 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
     const rawCommand = parts[0];
     const args = parts.slice(1);
 
-    // ─────────────────────────────────────────
-    // EMOJI-ONLY REPLY → SILENT REVEAL
-    // ─────────────────────────────────────────
     if (isEmojiCommand(rawCommand)) {
       const quoted = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
       if (quoted) {
@@ -633,9 +643,6 @@ async function handleMessages(conn, chatUpdate, isOwnerFlag) {
 
     if (!isBotOwner && !rateLimit.isAllowed(sender, settings.rateLimitPerMinute || 10)) return;
 
-    // ─────────────────────────────────────────
-    // PLUGIN DISPATCH
-    // ─────────────────────────────────────────
     if (global.commands && global.commands.has(commandName)) {
       const command = global.commands.get(commandName);
 
