@@ -1,6 +1,5 @@
 /**
  * NEXORA MD - WhatsApp Bot
- * Optimized: no per-chat presence spam, silent global keep-alive
  * Consolidated state loaders + all handlers
  * Owner: paired number (from creds.json)
  */
@@ -103,7 +102,7 @@ try {
   global.antiBlock = false;
 }
 
-// Always online (default OFF to prevent spam)
+// Always online
 try {
   if (fs.existsSync('./data/alwaysonline.json')) {
     const aoData = JSON.parse(fs.readFileSync('./data/alwaysonline.json', 'utf8'));
@@ -115,7 +114,7 @@ try {
   global.alwaysOnline = false;
 }
 
-// Auto-typing (default OFF)
+// Auto-typing
 try {
   if (fs.existsSync('./data/autotyping.json')) {
     const atData = JSON.parse(fs.readFileSync('./data/autotyping.json', 'utf8'));
@@ -132,7 +131,7 @@ try {
   global.autoTyping = { enabled: false, dm: false, groups: false, status: false };
 }
 
-// Auto-recording (default OFF)
+// Auto-recording
 try {
   if (fs.existsSync('./data/autorecording.json')) {
     const arData = JSON.parse(fs.readFileSync('./data/autorecording.json', 'utf8'));
@@ -381,11 +380,16 @@ async function startNexora() {
       msgRetryCounterCache,
       defaultQueryTimeoutMs: 60000,
       connectTimeoutMs: 60000,
-      keepAliveIntervalMs: 30000,   // ← raised from 10s to 30s
+      keepAliveIntervalMs: 30000,
       emitOwnEvents: false,
       fireInitQueries: false,
       retryRequestDelayMs: 250,
     });
+
+    // ─────────────────────────────────────────
+    // RAW SEND (bypasses channel branding)
+    // ─────────────────────────────────────────
+    global.rawSendMessage = Nexora.sendMessage.bind(Nexora);
 
     enableChannelBranding(Nexora, settings);
 
@@ -549,8 +553,6 @@ async function startNexora() {
           }
         } catch (error) {}
 
-        // NOTE: NO per-chat alwaysOnline here — global keep-alive only
-
         // ─── AUTO STATUS VIEW + REACT ───
         try {
           if (chatId === 'status@broadcast') {
@@ -564,7 +566,6 @@ async function startNexora() {
             if (autoView) {
               try {
                 await Nexora.readMessages([mek.key]);
-                console.log('[STATUS] Viewed from:', (mek.key.participant || mek.key.remoteJid).split('@')[0]);
               } catch (e) {}
             }
 
