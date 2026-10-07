@@ -17,18 +17,49 @@ module.exports = {
     const totalCommands = global.commands ? global.commands.size : 0;
     const currentMode = global.botMode ? global.botMode.toUpperCase() : 'PUBLIC';
 
-    const text = `${settings.botName}
+    const text = `
+╔═══════════════════╗
+║ ✦  𝐍 𝐄 𝐗 𝐎 𝐑 𝐀  ✦   
+╚═══════════════════╝
 
-Owner: ${settings.botOwner}
-Developer: ${settings.developerName}
-Prefix: ${settings.prefix}
-Mode: ${currentMode}
-Commands: ${totalCommands}
-Uptime: ${uptime}
-Memory: ${mem}
-Time Zone: ${settings.timeZone}
+┏━━━〔 ⚡ SYSTEM INFO 〕
+┃
+┃ ╭─❖ *Owner*
+┃ │➤ ${settings.botOwner}
+┃ ╰──────────────
+┃
+┃ ╭─❖ *Developer*
+┃ │➤ ${settings.developerName}
+┃ ╰──────────────
+┃
+┃ ╭─❖ *Prefix*
+┃ │➤ ${settings.prefix}
+┃ ╰──────────────
+┃
+┃ ╭─❖ *Mode*
+┃ │➤ ${currentMode}
+┃ ╰──────────────
+┃
+┃ ╭─❖ *Commands*
+┃ │➤ ${totalCommands}
+┃ ╰──────────────
+┃
+┃ ╭─❖ *Uptime*
+┃ │➤ ${uptime}
+┃ ╰──────────────
+┃
+┃ ╭─❖ *Memory*
+┃ │➤ ${mem}
+┃ ╰──────────────
+┃
+┃ ╭─❖ *Time Zone*
+┃ │➤ ${settings.timeZone}
+┃ ╰──────────────
+┃
 
-${settings.footer}`;
+
+      _${settings.footer}_ 
+`;
 
     await conn.sendMessage(chatId, { text });
   }
