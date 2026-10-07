@@ -26,7 +26,7 @@ module.exports = {
 
 ┏━━━〔 ⚡ SYSTEM INFO 〕━━━┓
 ┃
-┃ ╭─❖ 👑 *Owner*
+┃ ╭─❖ 👤 *Owner*
 ┃ │➤ ${settings.botOwner}
 ┃ ╰──────────────
 ┃
