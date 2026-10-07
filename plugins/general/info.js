@@ -21,9 +21,9 @@ module.exports = {
       const currentMode = global.botMode ? global.botMode.toUpperCase() : 'PUBLIC';
 
       const caption = `
-╔══════════════════════════════╗
-║   ✦  𝐍 𝐄 𝐗 𝐎 𝐑 𝐀  ✦   ║
-╚══════════════════════════════╝
+╔══════════════════════════╗
+║   ✦  𝐍 𝐄 𝐗 𝐎 𝐑 𝐀  ✦   
+╚══════════════════════════╝
 
 ┏━━━〔 ⚡ SYSTEM INFO 〕━━━┓
 ┃
