@@ -6,7 +6,10 @@
     "start": "node index.js"
   },
   "dependencies": {
+    "@distube/ytdl-core": "^4.16.4",
     "@hapi/boom": "^10.0.1",
+    "@lurepos/apkpure": "^1.0.0",
+    "@renpwn/fb-downloader": "^1.0.16",
     "@ssut/tiktok-api": "1.5.2",
     "@whiskeysockets/baileys": "^6.7.9",
     "adm-zip": "^0.5.12",
@@ -20,10 +23,12 @@
     "file-type": "^16.5.4",
     "form-data": "^4.0.0",
     "https-proxy-agent": "^7.0.5",
+    "instagram-url-direct": "^1.0.12",
     "moment-timezone": "^0.5.45",
     "node-cache": "^5.1.2",
     "pino": "^8.21.0",
-    "qs": "^6.12.0"
+    "qs": "^6.12.0",
+    "twitter-url-direct": "^1.0.8"
   },
   "engines": {
     "node": ">=18.0.0"
