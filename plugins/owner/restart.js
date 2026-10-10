@@ -1,7 +1,7 @@
 /**
  * NEXORA MD - Restart & Update Command
  * - Pulls latest code from GitHub
- * - Auto-installs dependencies when package.json changes
+ * - Auto-installs dependencies when package.json changes OR when plugins fail to load
  * - Hot-reloads plugins (no restart needed for new commands)
  * - Only restarts container if core files changed
  * - Works on Katabump / Pterodactyl / Render / Railway / Koyeb
@@ -16,9 +16,6 @@ const axios = require('axios');
 const REPO_API_URL = 'https://api.github.com/repos/queenbellabots-cloud/NEXORA-MD-/commits/main';
 const REPO_ZIP_URL = 'https://github.com/queenbellabots-cloud/NEXORA-MD-/archive/refs/heads/main.zip';
 
-// ─────────────────────────────────────────────
-// CONFIG
-// ─────────────────────────────────────────────
 const PROTECTED_FILES = ['settings.js', 'config.js', '.env'];
 const CORE_FILES = ['index.js', 'main.js', 'package.json'];
 const CORE_FOLDERS = ['lib'];
@@ -28,10 +25,10 @@ const PLUGIN_FOLDER = 'plugins';
 // THEME
 // ─────────────────────────────────────────────
 const THEME = {
-  header: '╔════════════════════════╗',
-  headerText: '      N E X O R A   M D  ',
-  subHeader: '     『 Rodgers Edition 』  ',
-  footerLine: '╚═════════════════════════╝',
+  header: '╔══════════════════════════════╗',
+  headerText: '║   ⚡  N E X O R A   M D  ⚡   ║',
+  subHeader: '║     『 Rodgers Edition 』     ║',
+  footerLine: '╚══════════════════════════════╝',
   divider: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
   bullet: '◆',
   subBullet: '▸',
@@ -58,17 +55,6 @@ function banner() {
   );
 }
 
-function card(title, lines) {
-  const body = lines.map(l => `${THEME.subBullet} ${l}`).join('\n');
-  return (
-    `┌──────────────────────────────┐\n` +
-    `  ${title}\n` +
-    `├──────────────────────────────┤\n` +
-    `${body}\n` +
-    `└──────────────────────────────┘`
-  );
-}
-
 function formatDate(date) {
   return date.toLocaleString('en-GB', {
     day: '2-digit',
@@ -80,9 +66,6 @@ function formatDate(date) {
   });
 }
 
-// ─────────────────────────────────────────────
-// HELPERS
-// ─────────────────────────────────────────────
 function ensureAdmZip() {
   try {
     require.resolve('adm-zip');
@@ -112,7 +95,7 @@ async function installAdmZip(chatId, conn, botRoot) {
 }
 
 // ─────────────────────────────────────────────
-// NPM INSTALL (auto-install new deps)
+// NPM INSTALL
 // ─────────────────────────────────────────────
 async function runNpmInstall(chatId, conn, botRoot) {
   await conn.sendMessage(chatId, {
@@ -289,7 +272,7 @@ async function downloadAndApply(botRoot) {
 // ─────────────────────────────────────────────
 function reloadPlugins(botRoot) {
   const pluginsDir = path.join(botRoot, 'plugins');
-  if (!fs.existsSync(pluginsDir)) return { loaded: 0, failed: 0 };
+  if (!fs.existsSync(pluginsDir)) return { loaded: 0, failed: 0, missingDeps: [] };
 
   const files = [];
   function walk(dir) {
@@ -316,6 +299,7 @@ function reloadPlugins(botRoot) {
 
   let loaded = 0;
   let failed = 0;
+  const missingDeps = [];
 
   for (const filePath of files) {
     try {
@@ -330,11 +314,14 @@ function reloadPlugins(botRoot) {
     } catch (error) {
       failed++;
       console.log(`[RESTART] Failed to load ${path.basename(filePath)}: ${error.message}`);
+      // Detect missing module errors → trigger reinstall
+      const m = error.message.match(/Cannot find module '([^']+)'/);
+      if (m && m[1]) missingDeps.push(m[1]);
     }
   }
 
   console.log(`[RESTART] Hot-reloaded ${loaded} commands (${failed} failed).`);
-  return { loaded, failed };
+  return { loaded, failed, missingDeps };
 }
 
 // ─────────────────────────────────────────────
@@ -358,9 +345,6 @@ module.exports = {
         return;
       }
 
-      // ─────────────────────────────────────────
-      // STEP 1 — Restarting (cool theme)
-      // ─────────────────────────────────────────
       await conn.sendMessage(chatId, { react: { text: '🔄', key: mek.key } });
 
       await conn.sendMessage(chatId, {
@@ -380,9 +364,6 @@ module.exports = {
 
       await new Promise(r => setTimeout(r, 800));
 
-      // ─────────────────────────────────────────
-      // STEP 2 — Ensure adm-zip
-      // ─────────────────────────────────────────
       if (!ensureAdmZip()) {
         const ok = await installAdmZip(chatId, conn, botRoot);
         if (!ok) {
@@ -397,9 +378,6 @@ module.exports = {
         }
       }
 
-      // ─────────────────────────────────────────
-      // STEP 3 — Fetch commit info
-      // ─────────────────────────────────────────
       const commitInfo = await fetchCommitInfo();
 
       const infoLines = [];
@@ -411,9 +389,6 @@ module.exports = {
         infoLines.push('Commit   : unavailable');
       }
 
-      // ─────────────────────────────────────────
-      // STEP 4 — Updating (cool theme)
-      // ─────────────────────────────────────────
       await conn.sendMessage(chatId, {
         text:
           `${banner()}\n\n` +
@@ -432,16 +407,10 @@ module.exports = {
           `${settings.footer}`
       });
 
-      // ─────────────────────────────────────────
-      // STEP 5 — Download + apply
-      // ─────────────────────────────────────────
       const applyRes = await downloadAndApply(botRoot);
 
       await new Promise(r => setTimeout(r, 800));
 
-      // ─────────────────────────────────────────
-      // STEP 6 — Final message
-      // ─────────────────────────────────────────
       const finalTime = formatDate(new Date());
 
       let finalText = `${banner()}\n\n`;
@@ -451,7 +420,6 @@ module.exports = {
       finalText += `│ Finished : ${finalTime}\n`;
       finalText += `└──────────────────────────\n\n`;
 
-      // ── FAILURE BRANCH ──
       if (!applyRes.success) {
         finalText +=
           `${THEME.cross} *Update Failed*\n\n` +
@@ -475,34 +443,9 @@ module.exports = {
       finalText += `${THEME.check} Updates applied successfully.\n`;
 
       // ─────────────────────────────────────────
-      // STEP 7 — Install deps if changed
+      // STEP: HOT RELOAD PLUGINS FIRST
       // ─────────────────────────────────────────
-      if (applyRes.depsChanged) {
-        finalText += `\n${THEME.box} *Dependencies Changed*\n`;
-        finalText += `┌──────────────────────────\n`;
-        finalText += `│ Installing new packages...\n`;
-        finalText += `└──────────────────────────\n`;
-        await conn.sendMessage(chatId, { text: finalText });
-
-        const installOk = await runNpmInstall(chatId, conn, botRoot);
-
-        // Rebuild final message after install
-        finalText = `${banner()}\n\n`;
-        finalText += `${THEME.fire} *RESTART COMPLETED*\n\n`;
-        finalText += `┌─ ${THEME.star} *BUILD INFO*\n`;
-        finalText += `│ Commit   : ${commitInfo.sha || 'unknown'}\n`;
-        finalText += `│ Finished : ${finalTime}\n`;
-        finalText += `└──────────────────────────\n\n`;
-
-        finalText += installOk
-          ? `${THEME.check} Dependencies installed\n`
-          : `${THEME.cross} Dependencies install FAILED\n`;
-      }
-
-      // ─────────────────────────────────────────
-      // STEP 8 — Hot reload plugins
-      // ─────────────────────────────────────────
-      let reloaded = { loaded: 0, failed: 0 };
+      let reloaded = { loaded: 0, failed: 0, missingDeps: [] };
       if (applyRes.pluginsChanged) {
         reloaded = reloadPlugins(botRoot);
         finalText += `\n${THEME.brain} *Plugins Reloaded*\n`;
@@ -510,6 +453,49 @@ module.exports = {
         finalText += `│ Loaded : ${reloaded.loaded}\n`;
         finalText += `│ Failed : ${reloaded.failed}\n`;
         finalText += `└──────────────────────────\n`;
+      }
+
+      // ─────────────────────────────────────────
+      // AUTO-REINSTALL TRIGGER
+      // If deps changed OR plugins failed with missing modules → npm install
+      // ─────────────────────────────────────────
+      const missing = [...new Set(reloaded.missingDeps || [])];
+      const shouldInstall = applyRes.depsChanged || missing.length > 0;
+
+      if (shouldInstall) {
+        finalText += `\n${THEME.box} *Dependencies Required*\n`;
+        finalText += `┌──────────────────────────\n`;
+        if (applyRes.depsChanged) finalText += `│ package.json changed\n`;
+        if (missing.length > 0) {
+          finalText += `│ Missing modules:\n`;
+          missing.forEach(m => { finalText += `│   ▸ ${m}\n`; });
+        }
+        finalText += `└──────────────────────────\n`;
+        await conn.sendMessage(chatId, { text: finalText });
+
+        const installOk = await runNpmInstall(chatId, conn, botRoot);
+
+        // Reload plugins AGAIN after install (now that libs exist)
+        const reloaded2 = reloadPlugins(botRoot);
+
+        // Rebuild final message
+        finalText = `${banner()}\n\n`;
+        finalText += `${THEME.fire} *RESTART COMPLETED*\n\n`;
+        finalText += `┌─ ${THEME.star} *BUILD INFO*\n`;
+        finalText += `│ Commit   : ${commitInfo.sha || 'unknown'}\n`;
+        finalText += `│ Finished : ${finalTime}\n`;
+        finalText += `└──────────────────────────\n\n`;
+        finalText += `${THEME.check} Updates applied successfully.\n`;
+        finalText += installOk
+          ? `${THEME.check} Dependencies installed\n`
+          : `${THEME.cross} Dependencies install FAILED\n`;
+        finalText += `\n${THEME.brain} *Plugins Reloaded*\n`;
+        finalText += `┌──────────────────────────\n`;
+        finalText += `│ Loaded : ${reloaded2.loaded}\n`;
+        finalText += `│ Failed : ${reloaded2.failed}\n`;
+        finalText += `└──────────────────────────\n`;
+
+        reloaded = reloaded2;
       }
 
       // ── NEW COMMANDS ──
@@ -527,9 +513,7 @@ module.exports = {
       const totalActive = (global.commands && global.commands.size) || 0;
       finalText += `\n${THEME.box} Total commands active: *${totalActive}*\n\n`;
 
-      // ─────────────────────────────────────────
-      // STEP 9 — Restart if core changed
-      // ─────────────────────────────────────────
+      // ── RESTART IF CORE CHANGED ──
       if (applyRes.coreChanged) {
         finalText +=
           `${THEME.gear} *Core files updated*\n` +
@@ -553,9 +537,6 @@ module.exports = {
         return;
       }
 
-      // ─────────────────────────────────────────
-      // STEP 10 — Plugins only
-      // ─────────────────────────────────────────
       finalText +=
         `${THEME.check} Plugins updated. No restart needed.\n\n` +
         `Send ${settings.prefix || '.'}menu to see the new list.\n\n` +
