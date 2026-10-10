@@ -25,10 +25,10 @@ const PLUGIN_FOLDER = 'plugins';
 // THEME
 // ─────────────────────────────────────────────
 const THEME = {
-  header: '╔══════════════════════════════╗',
-  headerText: '║   ⚡  N E X O R A   M D  ⚡   ║',
-  subHeader: '║     『 Rodgers Edition 』     ║',
-  footerLine: '╚══════════════════════════════╝',
+  header: '╔═════════════════════════╗',
+  headerText: '      N E X O R A   M D     ',
+  subHeader: '     『 Rodgers Edition 』     ',
+  footerLine: '╚════════════════════════╝',
   divider: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
   bullet: '◆',
   subBullet: '▸',
