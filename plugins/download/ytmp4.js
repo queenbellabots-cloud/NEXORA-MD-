@@ -27,9 +27,12 @@ module.exports = {
           url = txt.split(/\s+/).find(x => x.includes('youtube.com') || x.includes('youtu.be'));
         }
       }
-      if (!url) {
+
+      if (!url || !(url.includes('youtube.com') || url.includes('youtu.be'))) {
         await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
-        return conn.sendMessage(chatId, { text: `Usage: ${settings.prefix || '.'}ytmp4 <youtube-url>\n\n${settings.footer}` });
+        return conn.sendMessage(chatId, {
+          text: `Usage: ${settings.prefix || '.'}ytmp4 <youtube-url>\n\n${settings.footer}`
+        });
       }
 
       await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
@@ -48,17 +51,25 @@ module.exports = {
       });
 
       const buffer = fs.readFileSync(tmpFile);
-      const caption = `YOUTUBE\n\nTitle: ${info.videoDetails.title}\nAuthor: ${info.videoDetails.author.name}\n\n${settings.footer}`;
+      const caption =
+        `YOUTUBE\n\n` +
+        `Title: ${info.videoDetails.title}\n` +
+        `Author: ${info.videoDetails.author.name}\n\n` +
+        `${settings.footer}`;
 
       await conn.sendMessage(chatId, {
         video: buffer,
         caption,
         mimetype: 'video/mp4',
-        fileName: `${info.videoDetails.title.slice(0, 40)}.mp4`
+        fileName: `${info.videoDetails.title.slice(0, 40).replace(/[^a-zA-Z0-9]/g, '_')}.mp4`
       }, { quoted: mek });
+
     } catch (error) {
       console.log('[YTMP4] Error:', error.message);
-      await conn.sendMessage(chatId, { text: `YouTube failed: ${error.message}\n\n${settings.footer}` });
+      try { await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } }); } catch (e) {}
+      await conn.sendMessage(chatId, {
+        text: `YouTube failed: ${error.message}\n\n${settings.footer}`
+      });
     } finally {
       try { if (tmpFile && fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile); } catch (e) {}
     }
