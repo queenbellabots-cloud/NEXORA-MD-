@@ -1,6 +1,7 @@
 /**
  * NEXORA MD - TikTok Downloader
- * API: Omegatech
+ * Primary: tikwm.com (reliable, no key)
+ * Fallback: tiktokdl3
  * Usage:
  *   .td <tiktok-url>
  *   .td (reply to a tiktok link)
@@ -8,8 +9,6 @@
 
 const settings = require('../../settings');
 const axios = require('axios');
-
-const API_BASE = 'https://api.omegatech.xyz';
 
 module.exports = {
   name: 'td',
@@ -62,112 +61,72 @@ module.exports = {
       await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
       await conn.sendMessage(chatId, { text: `Downloading TikTok...` });
 
-      // ─────────────────────────────────────────
-      // 3. Try Omegatech TikTok API (POST then GET)
-      // ─────────────────────────────────────────
-      let data = null;
-      let lastError = null;
+      let videoUrl = null;
+      let musicUrl = null;
+      let title = 'TikTok Video';
+      let author = 'Unknown';
 
-      // Try POST
+      // ─────────────────────────────────────────
+      // 3. PRIMARY: tikwm.com
+      // ─────────────────────────────────────────
       try {
-        console.log('[TD] Trying: Omegatech POST');
-        const res = await axios.post(`${API_BASE}/download/tiktok`, { url }, {
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          timeout: 45000
-        });
-        data = res.data;
-        console.log('[TD] POST response:', JSON.stringify(data).slice(0, 500));
-      } catch (e) {
-        lastError = e.message;
-        console.log('[TD] Omegatech POST failed:', e.message);
-      }
+        console.log('[TD] Trying: tikwm.com');
+        const res = await axios.get(
+          `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`,
+          { timeout: 30000, headers: { 'Accept': 'application/json' } }
+        );
 
-      // Try GET fallback
-      if (!data) {
-        try {
-          console.log('[TD] Trying: Omegatech GET');
-          const res = await axios.get(`${API_BASE}/download/tiktok`, {
-            params: { url, action: 'download' },
-            timeout: 45000
-          });
-          data = res.data;
-          console.log('[TD] GET response:', JSON.stringify(data).slice(0, 500));
-        } catch (e) {
-          lastError = e.message;
-          console.log('[TD] Omegatech GET failed:', e.message);
+        const data = res.data;
+        console.log('[TD] tikwm response:', JSON.stringify(data).slice(0, 500));
+
+        if (data?.code === 0 && data.data) {
+          const d = data.data;
+          videoUrl = d.hdplay || d.play;
+          musicUrl = d.music;
+          title = d.title || title;
+          author = d.author?.nickname || d.author?.unique_id || author;
         }
+      } catch (e) {
+        console.log('[TD] ❌ tikwm failed:', e.message);
       }
 
-      // Try alternate endpoint if still nothing
-      if (!data) {
+      // ─────────────────────────────────────────
+      // 4. FALLBACK: tiktokdl3 (the one you gave)
+      // ─────────────────────────────────────────
+      if (!videoUrl) {
         try {
-          console.log('[TD] Trying: alternate endpoint');
+          console.log('[TD] Fallback: tiktokdl3');
           const res = await axios.get(
             `https://apis.davidcyril.name.ng/download/tiktokdl3?url=${encodeURIComponent(url)}`,
             { timeout: 45000, headers: { 'Accept': 'application/json' } }
           );
-          data = res.data;
-          console.log('[TD] Alternate response:', JSON.stringify(data).slice(0, 500));
+
+          const data = res.data;
+          console.log('[TD] tiktokdl3 response:', JSON.stringify(data).slice(0, 500));
+
+          const p = data?.result || data?.data || data;
+          videoUrl = p?.video || p?.videoUrl || p?.no_watermark || p?.play || p?.hd;
+          musicUrl = p?.music || p?.audio || null;
+          title = p?.title || p?.desc || title;
+          author = p?.author?.nickname || p?.author?.unique_id || p?.author || author;
         } catch (e) {
-          lastError = e.message;
-          console.log('[TD] Alternate failed:', e.message);
+          console.log('[TD] ❌ tiktokdl3 failed:', e.message);
         }
       }
 
-      if (!data) {
+      // ─────────────────────────────────────────
+      // 5. All failed
+      // ─────────────────────────────────────────
+      if (!videoUrl) {
         await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
         await conn.sendMessage(chatId, {
-          text: `TikTok download failed.\n\nReason: ${lastError || 'No response'}\n\n${settings.footer}`
+          text: `TikTok download failed.\n\nBoth providers returned no video URL.\n\n${settings.footer}`
         });
         return;
       }
 
       // ─────────────────────────────────────────
-      // 4. Extract video URL (handles all common shapes)
-      // ─────────────────────────────────────────
-      const payload = data?.result || data?.data || data;
-
-      const videoUrl =
-        payload?.video ||
-        payload?.videoUrl ||
-        payload?.no_watermark ||
-        payload?.noWatermark ||
-        payload?.play ||
-        payload?.hd ||
-        payload?.hdplay ||
-        payload?.download_url ||
-        payload?.downloadUrl ||
-        payload?.url ||
-        (Array.isArray(payload?.videos) && payload.videos[0]?.url) ||
-        (Array.isArray(payload?.links) && payload.links[0]) ||
-        null;
-
-      const musicUrl =
-        payload?.music ||
-        payload?.audio ||
-        payload?.musicUrl ||
-        payload?.audioUrl ||
-        null;
-
-      const title = payload?.title || payload?.desc || 'TikTok Video';
-      const author =
-        payload?.author?.nickname ||
-        payload?.author?.unique_id ||
-        payload?.author ||
-        payload?.username ||
-        'Unknown';
-
-      if (!videoUrl || typeof videoUrl !== 'string') {
-        const preview = JSON.stringify(data).slice(0, 600);
-        await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
-        await conn.sendMessage(chatId, {
-          text: `No video URL found in API response.\n\nAPI said:\n\`\`\`\n${preview}\n\`\`\`\n\n${settings.footer}`
-        });
-        return;
-      }
-
-      // ─────────────────────────────────────────
-      // 5. Send video
+      // 6. Send video
       // ─────────────────────────────────────────
       const caption =
         `TIKTOK\n\n` +
