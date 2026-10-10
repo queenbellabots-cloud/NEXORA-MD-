@@ -1,6 +1,7 @@
 /**
  * NEXORA MD - Restart & Update Command
  * - Pulls latest code from GitHub
+ * - Auto-installs dependencies when package.json changes
  * - Hot-reloads plugins (no restart needed for new commands)
  * - Only restarts container if core files changed
  * - Works on Katabump / Pterodactyl / Render / Railway / Koyeb
@@ -24,14 +25,47 @@ const CORE_FOLDERS = ['lib'];
 const PLUGIN_FOLDER = 'plugins';
 
 // ─────────────────────────────────────────────
-// HELPERS
+// THEME
 // ─────────────────────────────────────────────
+const THEME = {
+  header: '╔════════════════════════╗',
+  headerText: '      N E X O R A   M D  ',
+  subHeader: '     『 Rodgers Edition 』  ',
+  footerLine: '╚═════════════════════════╝',
+  divider: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━',
+  bullet: '◆',
+  subBullet: '▸',
+  check: '✅',
+  cross: '❌',
+  arrow: '➤',
+  spark: '✨',
+  gear: '⚙️',
+  rocket: '🚀',
+  fire: '🔥',
+  brain: '🧠',
+  box: '📦',
+  clock: '⏱',
+  bolt: '⚡',
+  star: '★'
+};
+
 function banner() {
   return (
-    `+---------------------------+\n` +
-    `|    NEXORA MD              |\n` +
-    `|    Created by Rodgers     |\n` +
-    `+---------------------------+`
+    `${THEME.header}\n` +
+    `${THEME.headerText}\n` +
+    `${THEME.subHeader}\n` +
+    `${THEME.footerLine}`
+  );
+}
+
+function card(title, lines) {
+  const body = lines.map(l => `${THEME.subBullet} ${l}`).join('\n');
+  return (
+    `┌──────────────────────────────┐\n` +
+    `  ${title}\n` +
+    `├──────────────────────────────┤\n` +
+    `${body}\n` +
+    `└──────────────────────────────┘`
   );
 }
 
@@ -46,6 +80,9 @@ function formatDate(date) {
   });
 }
 
+// ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
 function ensureAdmZip() {
   try {
     require.resolve('adm-zip');
@@ -57,7 +94,12 @@ function ensureAdmZip() {
 
 async function installAdmZip(chatId, conn, botRoot) {
   await conn.sendMessage(chatId, {
-    text: `Installing required package...\n\nPlease wait...`
+    text:
+      `${banner()}\n\n` +
+      `${THEME.box} *Installing Package*\n\n` +
+      `${THEME.arrow} adm-zip\n` +
+      `${THEME.arrow} Status: In progress...\n\n` +
+      `${settings.footer}`
   });
 
   const installCmd = exec('npm install adm-zip --save', { cwd: botRoot });
@@ -67,6 +109,38 @@ async function installAdmZip(chatId, conn, botRoot) {
   });
 
   return ensureAdmZip();
+}
+
+// ─────────────────────────────────────────────
+// NPM INSTALL (auto-install new deps)
+// ─────────────────────────────────────────────
+async function runNpmInstall(chatId, conn, botRoot) {
+  await conn.sendMessage(chatId, {
+    text:
+      `${banner()}\n\n` +
+      `${THEME.box} *Installing Dependencies*\n\n` +
+      `${THEME.arrow} Reading package.json...\n` +
+      `${THEME.arrow} Fetching new modules...\n` +
+      `${THEME.clock} This may take 1-2 minutes\n\n` +
+      `${settings.footer}`
+  });
+
+  return new Promise(resolve => {
+    const inst = exec(
+      'npm install --no-audit --no-fund --loglevel=error',
+      { cwd: botRoot, timeout: 300000, maxBuffer: 20 * 1024 * 1024 }
+    );
+
+    let output = '';
+    inst.stdout?.on('data', d => { output += d.toString(); });
+    inst.stderr?.on('data', d => { output += d.toString(); });
+
+    inst.on('close', code => {
+      console.log('[RESTART] npm install exit code:', code);
+      if (output) console.log('[RESTART] npm output tail:', output.slice(-800));
+      resolve(code === 0);
+    });
+  });
 }
 
 // ─────────────────────────────────────────────
@@ -114,7 +188,8 @@ async function downloadAndApply(botRoot) {
     success: false,
     error: null,
     coreChanged: false,
-    pluginsChanged: false
+    pluginsChanged: false,
+    depsChanged: false
   };
 
   try {
@@ -144,6 +219,18 @@ async function downloadAndApply(botRoot) {
 
     const sourceFolder = path.join(extractPath, extractedFolders[0]);
 
+    // ─── DETECT package.json CHANGE ───
+    const pkgSrc = path.join(sourceFolder, 'package.json');
+    const pkgDest = path.join(botRoot, 'package.json');
+    if (fs.existsSync(pkgSrc)) {
+      const oldPkg = fs.existsSync(pkgDest) ? fs.readFileSync(pkgDest) : Buffer.from('');
+      const newPkg = fs.readFileSync(pkgSrc);
+      if (!oldPkg.equals(newPkg)) {
+        result.depsChanged = true;
+        console.log('[RESTART] package.json changed — will run npm install');
+      }
+    }
+
     // Copy core files
     for (const file of CORE_FILES) {
       if (PROTECTED_FILES.includes(file)) continue;
@@ -164,7 +251,6 @@ async function downloadAndApply(botRoot) {
       const src = path.join(sourceFolder, folder);
       const dest = path.join(botRoot, folder);
       if (fs.existsSync(src)) {
-        // Simple folder change detection — always copy, mark changed
         if (fs.existsSync(dest)) {
           fs.rmSync(dest, { recursive: true, force: true });
         }
@@ -203,7 +289,7 @@ async function downloadAndApply(botRoot) {
 // ─────────────────────────────────────────────
 function reloadPlugins(botRoot) {
   const pluginsDir = path.join(botRoot, 'plugins');
-  if (!fs.existsSync(pluginsDir)) return 0;
+  if (!fs.existsSync(pluginsDir)) return { loaded: 0, failed: 0 };
 
   const files = [];
   function walk(dir) {
@@ -216,14 +302,12 @@ function reloadPlugins(botRoot) {
   }
   walk(pluginsDir);
 
-  // Clear require cache for all plugin files
   for (const filePath of files) {
     try {
       delete require.cache[require.resolve(filePath)];
     } catch (e) {}
   }
 
-  // Reset commands map
   if (global.commands && typeof global.commands.clear === 'function') {
     global.commands.clear();
   } else {
@@ -250,7 +334,7 @@ function reloadPlugins(botRoot) {
   }
 
   console.log(`[RESTART] Hot-reloaded ${loaded} commands (${failed} failed).`);
-  return loaded;
+  return { loaded, failed };
 }
 
 // ─────────────────────────────────────────────
@@ -260,7 +344,7 @@ module.exports = {
   name: 'restart',
   aliases: ['reboot', 'reload', 'update'],
   category: 'owner',
-  description: 'Download updates and hot-reload plugins',
+  description: 'Download updates, install deps, hot-reload plugins',
   usage: '.restart',
   ownerOnly: true,
   react: '🔄',
@@ -275,18 +359,22 @@ module.exports = {
       }
 
       // ─────────────────────────────────────────
-      // STEP 1 — Restarting message
+      // STEP 1 — Restarting (cool theme)
       // ─────────────────────────────────────────
       await conn.sendMessage(chatId, { react: { text: '🔄', key: mek.key } });
 
       await conn.sendMessage(chatId, {
         text:
           `${banner()}\n\n` +
-          `RESTARTING NEXORA MD...\n\n` +
-          `Checking for updates...\n` +
-          `Applying latest features...\n` +
-          `Restarting services...\n\n` +
-          `Status: Initializing...\n\n` +
+          `${THEME.rocket} *RESTART SEQUENCE INITIATED*\n\n` +
+          `${THEME.divider}\n` +
+          `${THEME.bullet} Scanning for updates\n` +
+          `${THEME.bullet} Preparing deployment\n` +
+          `${THEME.bullet} Warming up services\n` +
+          `${THEME.divider}\n\n` +
+          `╭─ ${THEME.bolt} *STATUS* ─╮\n` +
+          `│ Initializing...\n` +
+          `╰───────────────╯\n\n` +
           `${settings.footer}`
       });
 
@@ -299,7 +387,11 @@ module.exports = {
         const ok = await installAdmZip(chatId, conn, botRoot);
         if (!ok) {
           await conn.sendMessage(chatId, {
-            text: `Failed to install adm-zip. Aborting update.\n\n${settings.footer}`
+            text:
+              `${banner()}\n\n` +
+              `${THEME.cross} *Failed to install adm-zip*\n` +
+              `${THEME.arrow} Update aborted.\n\n` +
+              `${settings.footer}`
           });
           return;
         }
@@ -310,36 +402,33 @@ module.exports = {
       // ─────────────────────────────────────────
       const commitInfo = await fetchCommitInfo();
 
-      let updateInfoText = '';
+      const infoLines = [];
       if (commitInfo.sha) {
-        updateInfoText =
-          `Current Commit: ${commitInfo.sha}\n` +
-          `Update Time: ${commitInfo.date || 'unknown'}\n`;
-        if (commitInfo.message) {
-          updateInfoText += `Latest Message: ${commitInfo.message}\n`;
-        }
-        if (commitInfo.newCommands.length > 0) {
-          updateInfoText += `\nNew Commands Found:\n`;
-          commitInfo.newCommands.forEach(c => {
-            updateInfoText += `  ${settings.prefix || '.'}${c}\n`;
-          });
-        }
+        infoLines.push(`Commit   : ${commitInfo.sha}`);
+        infoLines.push(`Date     : ${commitInfo.date || 'unknown'}`);
+        if (commitInfo.message) infoLines.push(`Message  : ${commitInfo.message}`);
       } else {
-        updateInfoText = `Could not fetch commit info.\n`;
+        infoLines.push('Commit   : unavailable');
       }
 
       // ─────────────────────────────────────────
-      // STEP 4 — Updating message
+      // STEP 4 — Updating (cool theme)
       // ─────────────────────────────────────────
       await conn.sendMessage(chatId, {
         text:
           `${banner()}\n\n` +
-          `UPDATING NEXORA MD...\n\n` +
-          `${updateInfoText}\n` +
-          `Step 1/3: Downloading latest version...\n` +
-          `Step 2/3: Applying updates...\n` +
-          `Step 3/3: Restarting services...\n\n` +
-          `Status: Updating...\n\n` +
+          `${THEME.gear} *UPDATING NEXORA MD*\n\n` +
+          `┌─ ${THEME.star} *BUILD INFO*\n` +
+          infoLines.map(l => `│ ${l}`).join('\n') + '\n' +
+          `└──────────────────────────\n\n` +
+          `┌─ ${THEME.rocket} *PROGRESS*\n` +
+          `│ ①  Downloading latest version...\n` +
+          `│ ②  Applying updates...\n` +
+          `│ ③  Restarting services...\n` +
+          `└──────────────────────────\n\n` +
+          `╭─ ${THEME.bolt} *STATUS* ─╮\n` +
+          `│ Updating...\n` +
+          `╰───────────────╯\n\n` +
           `${settings.footer}`
       });
 
@@ -356,15 +445,24 @@ module.exports = {
       const finalTime = formatDate(new Date());
 
       let finalText = `${banner()}\n\n`;
-      finalText += `RESTART COMPLETED\n\n`;
-      finalText += `Current Commit: ${commitInfo.sha || 'unknown'}\n`;
-      finalText += `Update Time: ${finalTime}\n\n`;
+      finalText += `${THEME.fire} *RESTART COMPLETED*\n\n`;
+      finalText += `┌─ ${THEME.star} *BUILD INFO*\n`;
+      finalText += `│ Commit   : ${commitInfo.sha || 'unknown'}\n`;
+      finalText += `│ Finished : ${finalTime}\n`;
+      finalText += `└──────────────────────────\n\n`;
 
+      // ── FAILURE BRANCH ──
       if (!applyRes.success) {
-        finalText += `Update failed: ${applyRes.error}\n`;
-        finalText += `Bot will restart on current code.\n\n`;
-        finalText += `Status: Restarting process...\n\n`;
-        finalText += `${settings.footer}`;
+        finalText +=
+          `${THEME.cross} *Update Failed*\n\n` +
+          `┌─ ${THEME.arrow} *REASON*\n` +
+          `│ ${applyRes.error || 'unknown'}\n` +
+          `└──────────────────────────\n\n` +
+          `╭─ ${THEME.bolt} *STATUS* ─╮\n` +
+          `│ Restarting on current code...\n` +
+          `╰───────────────╯\n\n` +
+          `${settings.footer}`;
+
         await conn.sendMessage(chatId, { text: finalText });
 
         await new Promise(r => setTimeout(r, 2500));
@@ -374,33 +472,73 @@ module.exports = {
         return;
       }
 
-      finalText += `Updates applied successfully.\n`;
+      finalText += `${THEME.check} Updates applied successfully.\n`;
 
-      // ─── HOT RELOAD PLUGINS ───
-      let loaded = 0;
-      if (applyRes.pluginsChanged) {
-        loaded = reloadPlugins(botRoot);
-        finalText += `\nPlugins reloaded: ${loaded} commands.\n`;
+      // ─────────────────────────────────────────
+      // STEP 7 — Install deps if changed
+      // ─────────────────────────────────────────
+      if (applyRes.depsChanged) {
+        finalText += `\n${THEME.box} *Dependencies Changed*\n`;
+        finalText += `┌──────────────────────────\n`;
+        finalText += `│ Installing new packages...\n`;
+        finalText += `└──────────────────────────\n`;
+        await conn.sendMessage(chatId, { text: finalText });
+
+        const installOk = await runNpmInstall(chatId, conn, botRoot);
+
+        // Rebuild final message after install
+        finalText = `${banner()}\n\n`;
+        finalText += `${THEME.fire} *RESTART COMPLETED*\n\n`;
+        finalText += `┌─ ${THEME.star} *BUILD INFO*\n`;
+        finalText += `│ Commit   : ${commitInfo.sha || 'unknown'}\n`;
+        finalText += `│ Finished : ${finalTime}\n`;
+        finalText += `└──────────────────────────\n\n`;
+
+        finalText += installOk
+          ? `${THEME.check} Dependencies installed\n`
+          : `${THEME.cross} Dependencies install FAILED\n`;
       }
 
+      // ─────────────────────────────────────────
+      // STEP 8 — Hot reload plugins
+      // ─────────────────────────────────────────
+      let reloaded = { loaded: 0, failed: 0 };
+      if (applyRes.pluginsChanged) {
+        reloaded = reloadPlugins(botRoot);
+        finalText += `\n${THEME.brain} *Plugins Reloaded*\n`;
+        finalText += `┌──────────────────────────\n`;
+        finalText += `│ Loaded : ${reloaded.loaded}\n`;
+        finalText += `│ Failed : ${reloaded.failed}\n`;
+        finalText += `└──────────────────────────\n`;
+      }
+
+      // ── NEW COMMANDS ──
       if (commitInfo.newCommands.length > 0) {
-        finalText += `\nNew Commands:\n`;
+        finalText += `\n${THEME.spark} *New Commands*\n`;
+        finalText += `┌──────────────────────────\n`;
         commitInfo.newCommands.forEach(c => {
-          finalText += `  ${settings.prefix || '.'}${c}\n`;
+          finalText += `│ ${THEME.arrow} ${settings.prefix || '.'}${c}\n`;
         });
+        finalText += `└──────────────────────────\n`;
       } else {
-        finalText += `\nNo new commands detected.\n`;
+        finalText += `\n${THEME.arrow} No new commands detected.\n`;
       }
 
       const totalActive = (global.commands && global.commands.size) || 0;
-      finalText += `\nTotal commands active: ${totalActive}\n\n`;
+      finalText += `\n${THEME.box} Total commands active: *${totalActive}*\n\n`;
 
       // ─────────────────────────────────────────
-      // STEP 7 — Restart only if core files changed
+      // STEP 9 — Restart if core changed
       // ─────────────────────────────────────────
       if (applyRes.coreChanged) {
-        finalText += `Core files updated. Restarting process in 3s...\n\n`;
-        finalText += `${settings.footer}`;
+        finalText +=
+          `${THEME.gear} *Core files updated*\n` +
+          `Restarting process in 3s...\n\n` +
+          `╭─ ${THEME.bolt} *STATUS* ─╮\n` +
+          `│ Rebooting container...\n` +
+          `╰───────────────╯\n\n` +
+          `${settings.footer}`;
+
         await conn.sendMessage(chatId, { text: finalText });
 
         await new Promise(r => setTimeout(r, 3000));
@@ -416,11 +554,13 @@ module.exports = {
       }
 
       // ─────────────────────────────────────────
-      // Plugins only — no container restart needed
+      // STEP 10 — Plugins only
       // ─────────────────────────────────────────
-      finalText += `Plugins updated. No restart needed.\n`;
-      finalText += `Send ${settings.prefix || '.'}menu to see the new list.\n\n`;
-      finalText += `${settings.footer}`;
+      finalText +=
+        `${THEME.check} Plugins updated. No restart needed.\n\n` +
+        `Send ${settings.prefix || '.'}menu to see the new list.\n\n` +
+        `${settings.footer}`;
+
       await conn.sendMessage(chatId, { text: finalText });
       return;
 
@@ -429,7 +569,13 @@ module.exports = {
       try { await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } }); } catch (e) {}
       try {
         await conn.sendMessage(chatId, {
-          text: `Restart error: ${error.message}\n\n${settings.footer}`
+          text:
+            `${banner()}\n\n` +
+            `${THEME.cross} *Restart Error*\n\n` +
+            `┌─ ${THEME.arrow} *REASON*\n` +
+            `│ ${error.message}\n` +
+            `└──────────────────────────\n\n` +
+            `${settings.footer}`
         });
       } catch (e) {}
     }
