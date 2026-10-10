@@ -8,13 +8,13 @@
 
 const settings = require('../../settings');
 
-// Load the library safely so plugin never crashes on load
-let TikTokClient;
+// Safe-load the library so the plugin never crashes at require time
+let TikTokClient = null;
 try {
   ({ TikTokClient } = require('@ssut/tiktok-api'));
+  console.log('[TD] Library loaded OK');
 } catch (e) {
   console.log('[TD] Library not installed:', e.message);
-  TikTokClient = null;
 }
 
 module.exports = {
@@ -59,9 +59,6 @@ module.exports = {
             `Usage:\n` +
             `  ${settings.prefix || '.'}td <tiktok-url>\n` +
             `  Reply to a message with ${settings.prefix || '.'}td\n\n` +
-            `Examples:\n` +
-            `  ${settings.prefix || '.'}td https://vt.tiktok.com/xxxxx/\n` +
-            `  ${settings.prefix || '.'}td https://www.tiktok.com/@user/video/123\n\n` +
             `${settings.footer}`
         });
       }
