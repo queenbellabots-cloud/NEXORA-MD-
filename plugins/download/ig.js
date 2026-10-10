@@ -24,9 +24,12 @@ module.exports = {
           url = txt.split(/\s+/).find(x => x.includes('instagram.com'));
         }
       }
+
       if (!url || !url.includes('instagram.com')) {
         await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
-        return conn.sendMessage(chatId, { text: `Usage: ${settings.prefix || '.'}ig <instagram-url>\n\n${settings.footer}` });
+        return conn.sendMessage(chatId, {
+          text: `Usage: ${settings.prefix || '.'}ig <instagram-url>\n\n${settings.footer}`
+        });
       }
 
       await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
@@ -34,23 +37,29 @@ module.exports = {
 
       const result = await instagramGetUrl(url);
       const links = result?.url_list || [];
-      if (!links.length) throw new Error('No media found');
+      if (links.length === 0) {
+        throw new Error('No media found');
+      }
 
-      for (const link of links) {
+      for (let i = 0; i < links.length; i++) {
         try {
           await conn.sendMessage(chatId, {
-            video: { url: link },
-            caption: `INSTAGRAM\n\n${settings.footer}`,
+            video: { url: links[i] },
+            caption: `INSTAGRAM${links.length > 1 ? ` (${i + 1}/${links.length})` : ''}\n\n${settings.footer}`,
             mimetype: 'video/mp4',
-            fileName: `ig_${Date.now()}.mp4`
-          }, { quoted: mek });
+            fileName: `ig_${Date.now()}_${i}.mp4`
+          }, { quoted: i === 0 ? mek : undefined });
         } catch (e) {
-          await conn.sendMessage(chatId, { video: { url: link }, caption: settings.footer }, { quoted: mek });
+          console.log(`[IG] Link ${i} failed:`, e.message);
         }
       }
+
     } catch (error) {
       console.log('[IG] Error:', error.message);
-      await conn.sendMessage(chatId, { text: `Instagram failed: ${error.message}\n\n${settings.footer}` });
+      try { await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } }); } catch (e) {}
+      await conn.sendMessage(chatId, {
+        text: `Instagram failed: ${error.message}\n\n${settings.footer}`
+      });
     }
   }
 };
