@@ -8,11 +8,11 @@
   "dependencies": {
     "@distube/ytdl-core": "^4.16.4",
     "@hapi/boom": "^10.0.1",
-    "@lurepos/apkpure": "^0.6.0",
     "@renpwn/fb-downloader": "^1.0.16",
     "@ssut/tiktok-api": "1.5.2",
     "@whiskeysockets/baileys": "^6.7.9",
     "adm-zip": "^0.5.12",
+    "apkpure": "^0.6.0",
     "async-retry": "^1.3.3",
     "awesome-phonenumber": "^5.7.0",
     "axios": "1.13.2",
