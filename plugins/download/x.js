@@ -1,10 +1,10 @@
 /**
  * NEXORA MD - Twitter/X Downloader
- * Library: twitter-url-direct
+ * Library: twitter-downloader
  * Usage: .x <twitter-url>
  */
 const settings = require('../../settings');
-const twitterGetUrl = require('twitter-url-direct');
+const { TwitterDL } = require('twitter-downloader');
 
 module.exports = {
   name: 'x',
@@ -24,19 +24,34 @@ module.exports = {
           url = txt.split(/\s+/).find(x => x.includes('twitter.com') || x.includes('x.com'));
         }
       }
-      if (!url) {
+
+      if (!url || !(url.includes('twitter.com') || url.includes('x.com'))) {
         await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
-        return conn.sendMessage(chatId, { text: `Usage: ${settings.prefix || '.'}x <twitter-url>\n\n${settings.footer}` });
+        return conn.sendMessage(chatId, {
+          text: `Usage: ${settings.prefix || '.'}x <twitter-url>\n\n${settings.footer}`
+        });
       }
 
       await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
       await conn.sendMessage(chatId, { text: `Downloading Twitter/X...` });
 
-      const result = await twitterGetUrl(url);
-      if (!result?.download?.length) throw new Error('No video found');
+      const result = await TwitterDL(url);
+      if (result.status !== 'success' || !result.result?.media?.length) {
+        throw new Error(result.message || 'No media found');
+      }
 
-      const best = result.download.find(d => d.quality?.includes('720') || d.quality?.includes('1080')) || result.download[0];
-      const caption = `TWITTER/X\n\nTitle: ${result.title || 'Video'}\n\n${settings.footer}`;
+      const media = result.result.media.find(m => m.type === 'video' || m.type === 'gif');
+      if (!media) throw new Error('No video found in tweet');
+
+      // twitter-downloader returns videos sorted; pick first (best quality)
+      const best = media.videos?.[0];
+      if (!best?.url) throw new Error('No downloadable video URL');
+
+      const caption =
+        `TWITTER/X\n\n` +
+        `Author: @${result.result.author?.username || 'unknown'}\n` +
+        `Text: ${(result.result.description || '').slice(0, 200) || 'No text'}\n\n` +
+        `${settings.footer}`;
 
       await conn.sendMessage(chatId, {
         video: { url: best.url },
@@ -46,7 +61,10 @@ module.exports = {
       }, { quoted: mek });
     } catch (error) {
       console.log('[X] Error:', error.message);
-      await conn.sendMessage(chatId, { text: `Twitter/X failed: ${error.message}\n\n${settings.footer}` });
+      try { await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } }); } catch (e) {}
+      await conn.sendMessage(chatId, {
+        text: `Twitter/X failed: ${error.message}\n\n${settings.footer}`
+      });
     }
   }
 };
