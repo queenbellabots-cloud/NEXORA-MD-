@@ -1,7 +1,6 @@
 /**
  * NEXORA MD - Restart & Update Command
  * - Pulls latest code from GitHub
- * - Installs new dependencies if package.json changed
  * - Hot-reloads plugins (no restart needed for new commands)
  * - Only restarts container if core files changed
  * - Works on Katabump / Pterodactyl / Render / Railway / Koyeb
@@ -71,32 +70,6 @@ async function installAdmZip(chatId, conn, botRoot) {
 }
 
 // ─────────────────────────────────────────────
-// INSTALL DEPENDENCIES
-// ─────────────────────────────────────────────
-async function installDependencies(chatId, conn, botRoot) {
-  await conn.sendMessage(chatId, {
-    text: `New dependencies detected.\n\nInstalling... this may take a minute.\n\n${settings.footer}`
-  });
-
-  return new Promise(resolve => {
-    const inst = exec(
-      'npm install --no-audit --no-fund --loglevel=error',
-      { cwd: botRoot, timeout: 300000, maxBuffer: 10 * 1024 * 1024 }
-    );
-
-    let output = '';
-    inst.stdout?.on('data', d => { output += d.toString(); });
-    inst.stderr?.on('data', d => { output += d.toString(); });
-
-    inst.on('close', code => {
-      console.log('[RESTART] npm install exit code:', code);
-      if (output) console.log('[RESTART] npm output:', output.slice(-500));
-      resolve(code === 0);
-    });
-  });
-}
-
-// ─────────────────────────────────────────────
 // GITHUB
 // ─────────────────────────────────────────────
 async function fetchCommitInfo() {
@@ -141,8 +114,7 @@ async function downloadAndApply(botRoot) {
     success: false,
     error: null,
     coreChanged: false,
-    pluginsChanged: false,
-    depsChanged: false
+    pluginsChanged: false
   };
 
   try {
@@ -172,18 +144,6 @@ async function downloadAndApply(botRoot) {
 
     const sourceFolder = path.join(extractPath, extractedFolders[0]);
 
-    // ─── CHECK IF package.json CHANGED ───
-    const pkgSrc = path.join(sourceFolder, 'package.json');
-    const pkgDest = path.join(botRoot, 'package.json');
-    if (fs.existsSync(pkgSrc)) {
-      const oldPkg = fs.existsSync(pkgDest) ? fs.readFileSync(pkgDest) : Buffer.from('');
-      const newPkg = fs.readFileSync(pkgSrc);
-      if (!oldPkg.equals(newPkg)) {
-        result.depsChanged = true;
-        console.log('[RESTART] package.json changed — will install deps');
-      }
-    }
-
     // Copy core files
     for (const file of CORE_FILES) {
       if (PROTECTED_FILES.includes(file)) continue;
@@ -204,6 +164,7 @@ async function downloadAndApply(botRoot) {
       const src = path.join(sourceFolder, folder);
       const dest = path.join(botRoot, folder);
       if (fs.existsSync(src)) {
+        // Simple folder change detection — always copy, mark changed
         if (fs.existsSync(dest)) {
           fs.rmSync(dest, { recursive: true, force: true });
         }
@@ -213,6 +174,7 @@ async function downloadAndApply(botRoot) {
       }
     }
 
+    // Copy plugins folder
     const pluginSrc = path.join(sourceFolder, PLUGIN_FOLDER);
     const pluginDest = path.join(botRoot, PLUGIN_FOLDER);
     if (fs.existsSync(pluginSrc)) {
@@ -254,12 +216,14 @@ function reloadPlugins(botRoot) {
   }
   walk(pluginsDir);
 
+  // Clear require cache for all plugin files
   for (const filePath of files) {
     try {
       delete require.cache[require.resolve(filePath)];
     } catch (e) {}
   }
 
+  // Reset commands map
   if (global.commands && typeof global.commands.clear === 'function') {
     global.commands.clear();
   } else {
@@ -411,21 +375,6 @@ module.exports = {
       }
 
       finalText += `Updates applied successfully.\n`;
-
-      // ─── INSTALL NEW DEPENDENCIES IF NEEDED ───
-      if (applyRes.depsChanged) {
-        finalText += `\nDependencies changed. Installing...\n`;
-        await conn.sendMessage(chatId, { text: finalText });
-
-        const installOk = await installDependencies(chatId, conn, botRoot);
-        finalText = `${banner()}\n\n`;
-        finalText += `RESTART COMPLETED\n\n`;
-        finalText += `Current Commit: ${commitInfo.sha || 'unknown'}\n`;
-        finalText += `Update Time: ${finalTime}\n\n`;
-        finalText += installOk
-          ? `Dependencies installed successfully.\n`
-          : `Dependencies install FAILED. Check logs.\n`;
-      }
 
       // ─── HOT RELOAD PLUGINS ───
       let loaded = 0;
