@@ -1,7 +1,6 @@
 /**
  * NEXORA MD - TikTok Downloader
- * Primary: tikwm.com (reliable, no key)
- * Fallback: tiktokdl3
+ * Multi-provider: works from datacenter IPs
  * Usage:
  *   .td <tiktok-url>
  *   .td (reply to a tiktok link)
@@ -20,20 +19,13 @@ module.exports = {
 
   async execute(conn, mek, args, chatId, isOwner) {
     try {
-      // ─────────────────────────────────────────
-      // 1. Get URL from args or replied message
-      // ─────────────────────────────────────────
       let url = args.join(' ').trim();
 
       if (!url) {
         const contextInfo = mek.message?.extendedTextMessage?.contextInfo;
         const quoted = contextInfo?.quotedMessage;
-
         if (quoted) {
-          const text =
-            quoted.conversation ||
-            quoted.extendedTextMessage?.text ||
-            '';
+          const text = quoted.conversation || quoted.extendedTextMessage?.text || '';
           const found = text.split(/\s+/).find(x => x.includes('tiktok.com'));
           if (found) url = found;
         }
@@ -42,22 +34,11 @@ module.exports = {
       if (!url || !url.includes('tiktok.com')) {
         await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
         await conn.sendMessage(chatId, {
-          text:
-            `TikTok Downloader\n\n` +
-            `Usage:\n` +
-            `  ${settings.prefix || '.'}td <tiktok-url>\n` +
-            `  Reply to a message with ${settings.prefix || '.'}td\n\n` +
-            `Examples:\n` +
-            `  ${settings.prefix || '.'}td https://vt.tiktok.com/xxxxx/\n` +
-            `  ${settings.prefix || '.'}td https://www.tiktok.com/@user/video/123\n\n` +
-            `${settings.footer}`
+          text: `TikTok Downloader\n\nUsage: ${settings.prefix || '.'}td <tiktok-url>\n\n${settings.footer}`
         });
         return;
       }
 
-      // ─────────────────────────────────────────
-      // 2. React and notify
-      // ─────────────────────────────────────────
       await conn.sendMessage(chatId, { react: { text: '✅', key: mek.key } });
       await conn.sendMessage(chatId, { text: `Downloading TikTok...` });
 
@@ -65,73 +46,146 @@ module.exports = {
       let musicUrl = null;
       let title = 'TikTok Video';
       let author = 'Unknown';
+      let used = '';
 
-      // ─────────────────────────────────────────
-      // 3. PRIMARY: tikwm.com
-      // ─────────────────────────────────────────
-      try {
-        console.log('[TD] Trying: tikwm.com');
-        const res = await axios.get(
-          `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`,
-          { timeout: 30000, headers: { 'Accept': 'application/json' } }
-        );
-
-        const data = res.data;
-        console.log('[TD] tikwm response:', JSON.stringify(data).slice(0, 500));
-
-        if (data?.code === 0 && data.data) {
-          const d = data.data;
-          videoUrl = d.hdplay || d.play;
-          musicUrl = d.music;
-          title = d.title || title;
-          author = d.author?.nickname || d.author?.unique_id || author;
-        }
-      } catch (e) {
-        console.log('[TD] ❌ tikwm failed:', e.message);
-      }
-
-      // ─────────────────────────────────────────
-      // 4. FALLBACK: tiktokdl3 (the one you gave)
-      // ─────────────────────────────────────────
+      // ═════════════════════════════════════════
+      // PROVIDER 1 — tiklydown.eu.org
+      // ═════════════════════════════════════════
       if (!videoUrl) {
         try {
-          console.log('[TD] Fallback: tiktokdl3');
+          console.log('[TD] 1/5 tiklydown');
+          const res = await axios.get(
+            `https://api.tiklydown.eu.org/api/download?url=${encodeURIComponent(url)}`,
+            { timeout: 30000, headers: { 'Accept': 'application/json' } }
+          );
+          const d = res.data;
+          console.log('[TD] tiklydown:', JSON.stringify(d).slice(0, 400));
+
+          videoUrl = d?.video?.noWatermark || d?.video?.watermark || d?.video?.playAddr;
+          musicUrl = d?.music?.playUrl || d?.music?.url || null;
+          title = d?.title || title;
+          author = d?.author?.name || d?.author?.unique_id || author;
+          if (videoUrl) used = 'tiklydown';
+        } catch (e) { console.log('[TD] ❌ tiklydown:', e.message); }
+      }
+
+      // ═════════════════════════════════════════
+      // PROVIDER 2 — tiktokdownload.online
+      // ═════════════════════════════════════════
+      if (!videoUrl) {
+        try {
+          console.log('[TD] 2/5 tiktokdownload.online');
+          const res = await axios.get(
+            `https://tiktokdownload.online/api/download?url=${encodeURIComponent(url)}`,
+            { timeout: 30000, headers: { 'Accept': 'application/json' } }
+          );
+          const d = res.data;
+          console.log('[TD] tiktokdownload:', JSON.stringify(d).slice(0, 400));
+
+          videoUrl = d?.video || d?.play || d?.data?.video || d?.data?.play;
+          musicUrl = d?.music || d?.data?.music || null;
+          title = d?.title || d?.data?.title || title;
+          if (videoUrl) used = 'tiktokdownload.online';
+        } catch (e) { console.log('[TD] ❌ tiktokdownload:', e.message); }
+      }
+
+      // ═════════════════════════════════════════
+      // PROVIDER 3 — ssstik.io (scrape)
+      // ═════════════════════════════════════════
+      if (!videoUrl) {
+        try {
+          console.log('[TD] 3/5 ssstik.io');
+          const res = await axios.post(
+            'https://ssstik.io/abc?url=dl',
+            new URLSearchParams({ id: url, locale: 'en', tt: 'abc' }).toString(),
+            {
+              timeout: 30000,
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+                'Origin': 'https://ssstik.io',
+                'Referer': 'https://ssstik.io/en'
+              }
+            }
+          );
+          const html = res.data;
+          const match = html.match(/href="(https:\/\/[^"]+\.mp4[^"]*)"/);
+          if (match) {
+            videoUrl = match[1];
+            used = 'ssstik';
+            console.log('[TD] ssstik URL:', videoUrl);
+          }
+        } catch (e) { console.log('[TD] ❌ ssstik:', e.message); }
+      }
+
+      // ═════════════════════════════════════════
+      // PROVIDER 4 — your tiktokdl3
+      // ═════════════════════════════════════════
+      if (!videoUrl) {
+        try {
+          console.log('[TD] 4/5 tiktokdl3');
           const res = await axios.get(
             `https://apis.davidcyril.name.ng/download/tiktokdl3?url=${encodeURIComponent(url)}`,
             { timeout: 45000, headers: { 'Accept': 'application/json' } }
           );
+          const d = res.data;
+          console.log('[TD] tiktokdl3:', JSON.stringify(d).slice(0, 400));
 
-          const data = res.data;
-          console.log('[TD] tiktokdl3 response:', JSON.stringify(data).slice(0, 500));
-
-          const p = data?.result || data?.data || data;
+          const p = d?.result || d?.data || d;
           videoUrl = p?.video || p?.videoUrl || p?.no_watermark || p?.play || p?.hd;
           musicUrl = p?.music || p?.audio || null;
           title = p?.title || p?.desc || title;
           author = p?.author?.nickname || p?.author?.unique_id || p?.author || author;
-        } catch (e) {
-          console.log('[TD] ❌ tiktokdl3 failed:', e.message);
-        }
+          if (videoUrl) used = 'tiktokdl3';
+        } catch (e) { console.log('[TD] ❌ tiktokdl3:', e.message); }
       }
 
-      // ─────────────────────────────────────────
-      // 5. All failed
-      // ─────────────────────────────────────────
+      // ═════════════════════════════════════════
+      // PROVIDER 5 — tikwm with browser UA (bypass 403)
+      // ═════════════════════════════════════════
+      if (!videoUrl) {
+        try {
+          console.log('[TD] 5/5 tikwm (browser UA)');
+          const res = await axios.get(
+            `https://www.tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`,
+            {
+              timeout: 30000,
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'application/json',
+                'Referer': 'https://www.tikwm.com/'
+              }
+            }
+          );
+          const d = res.data;
+          console.log('[TD] tikwm:', JSON.stringify(d).slice(0, 400));
+
+          if (d?.code === 0 && d.data) {
+            videoUrl = d.data.hdplay || d.data.play;
+            musicUrl = d.data.music;
+            title = d.data.title || title;
+            author = d.data.author?.nickname || d.data.author?.unique_id || author;
+            if (videoUrl) used = 'tikwm';
+          }
+        } catch (e) { console.log('[TD] ❌ tikwm:', e.message); }
+      }
+
+      // ── All failed ──
       if (!videoUrl) {
         await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } });
         await conn.sendMessage(chatId, {
-          text: `TikTok download failed.\n\nBoth providers returned no video URL.\n\n${settings.footer}`
+          text: `All providers failed.\n\nCheck console for [TD] logs.\n\n${settings.footer}`
         });
         return;
       }
 
-      // ─────────────────────────────────────────
-      // 6. Send video
-      // ─────────────────────────────────────────
+      console.log('[TD] ✅ Video from:', used);
+
       const caption =
         `TIKTOK\n\n` +
         `Title: ${title}\n` +
-        `Author: ${author}\n\n` +
+        `Author: ${author}\n` +
+        `Source: ${used}\n\n` +
         `${settings.footer}`;
 
       try {
@@ -142,9 +196,8 @@ module.exports = {
           fileName: `tiktok_${Date.now()}.mp4`
         }, { quoted: mek });
 
-        console.log(`[TD] Video sent: ${title}`);
+        console.log(`[TD] Video sent via ${used}`);
 
-        // Optional: send audio
         if (musicUrl) {
           try {
             await conn.sendMessage(chatId, {
@@ -153,25 +206,19 @@ module.exports = {
               fileName: `tiktok_audio_${Date.now()}.mp3`,
               ptt: false
             }, { quoted: mek });
-          } catch (audioErr) {
-            console.log('[TD] Audio failed:', audioErr.message);
-          }
+          } catch (e) { console.log('[TD] Audio fail:', e.message); }
         }
       } catch (sendErr) {
-        console.log('[TD] Send failed:', sendErr.message);
+        console.log('[TD] Send fail:', sendErr.message);
         await conn.sendMessage(chatId, {
-          text: `Video send failed: ${sendErr.message}\n\nDirect link:\n${videoUrl}\n\n${settings.footer}`
+          text: `Send failed: ${sendErr.message}\n\nDirect link:\n${videoUrl}\n\n${settings.footer}`
         });
       }
 
     } catch (error) {
       console.log('[TD] Error:', error.message);
       try { await conn.sendMessage(chatId, { react: { text: '❌', key: mek.key } }); } catch (e) {}
-      try {
-        await conn.sendMessage(chatId, {
-          text: `Error: ${error.message}\n\n${settings.footer}`
-        });
-      } catch (e) {}
+      await conn.sendMessage(chatId, { text: `Error: ${error.message}` });
     }
   }
 };
